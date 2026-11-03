@@ -48,11 +48,14 @@ async function loadStatus() {
   try {
     const s = await api("/api/status");
     $("#brand-name").textContent = `${s.owner.split(" ")[0]}'s Brain`;
+    window.OWNER_FIRST = s.owner.split(" ")[0];
+    const hello = document.querySelector(".empty .hello");
+    if (hello) hello.textContent = `Hey ${window.OWNER_FIRST}. What's on your mind?`;
     const ready = s.chain.filter((p) => p.ready);
     const main = ready[0]
-      ? `<span class="ok">● ${ready[0].label.split(" (")[0]}</span>${ready.length > 1 ? ` +${ready.length - 1} backup` : ""}`
-      : `<span class="off">○ No AI model set up: open Settings</span>`;
-    $("#status").innerHTML = `${main} &nbsp; ${s.memory.total} memories · ${s.knowledge.sources} learned`;
+      ? `<span class="ok">${ready[0].label.split(" (")[0]}${ready.length > 1 ? ` + ${ready.length - 1} backup` : ""}</span>`
+      : `<span class="off">Add an AI key in Settings</span>`;
+    $("#status").innerHTML = `${main}<span class="count">${s.memory.total} memories</span><span class="count">${s.knowledge.sources} learned</span>`;
     const b = $("#pending-badge");
     b.hidden = !s.memory.pending; b.textContent = s.memory.pending;
   } catch { $("#status").textContent = "Server not reachable"; }
@@ -76,9 +79,23 @@ function addMsg(role, text, extra) {
 }
 
 function emptyChat() {
+  const first = window.OWNER_FIRST || "there";
+  const ask = (text) => el("button", { type: "button", onclick: () => sendChat(null, { text }) }, text);
   $("#messages").replaceChildren(el("div", { class: "empty" },
-    "Start talking. In Mirror mode the Brain answers as you, from your memories. ",
-    "It gets better as you add journal entries, interview answers and your Identity File."));
+    el("h1", { class: "hello" }, `Hey ${first}. What's on your mind?`),
+    el("p", {}, "Talk it through out loud or type. I answer from your memories, in your own way of thinking."),
+    el("button", { type: "button", class: "orb", id: "hero-talk", "aria-label": "Start talking" }, svgMic()),
+    el("div", { class: "orb-label" }, "Tap to talk"),
+    el("div", { class: "suggest" },
+      ask("How was my week?"), ask("Help me plan tomorrow"), ask("What did I decide about pricing?"))));
+}
+
+function svgMic() {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor");
+  s.setAttribute("stroke-width", "1.8"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("aria-hidden", "true");
+  s.innerHTML = '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>';
+  return s;
 }
 
 async function loadChat() {
@@ -104,7 +121,7 @@ function replyExtras(r) {
     extra.append(box);
   }
   const recalled = [...(r.memories_used || []).map((m) => `#${m.id} ${m.content.slice(0, 140)}`),
-                    ...(r.knowledge_used || []).map((k) => `📚 ${k.title}`)];
+                    ...(r.knowledge_used || []).map((k) => `Learned: ${k.title}`)];
   if (recalled.length) {
     extra.append(el("details", {}, el("summary", {}, `${recalled.length} memories/knowledge recalled · ${r.model}`),
       ...recalled.map((t) => el("div", {}, t))));
@@ -354,7 +371,7 @@ function providerCard(pid, idx) {
         try { await saveSettings(true); const r = await api(`/api/settings/discover/${pid}`, { method: "POST" });
           S = r.settings; renderSettings(); showDiscovery([r.result]);
         } catch (e) { result.className = "result bad"; result.textContent = e.message; }
-      } }, "🔍 Auto-find"),
+      } }, "Auto-find"),
       el("button", { class: "mini", onclick: async () => {
         result.className = "result"; result.textContent = "Loading models…";
         try { await saveSettings(true); const r = await api(`/api/settings/models/${pid}`);
@@ -362,7 +379,7 @@ function providerCard(pid, idx) {
           result.textContent = `${r.models.length} models loaded. Click the model box to pick one.`;
         } catch (e) { result.className = "result bad"; result.textContent = e.message; }
       } }, "Load models"),
-      el("button", { class: "mini primary", onclick: async () => {
+      el("button", { class: "mini", onclick: async () => {
         result.className = "result"; result.textContent = "Testing…";
         try { await saveSettings(true); const r = await api(`/api/settings/test/${pid}`, { method: "POST" });
           result.className = `result ${r.ok ? "ok" : "bad"}`;
@@ -547,7 +564,7 @@ async function loadLearn() {
         } }, "Delete")))))
     : [el("p", { class: "hint" }, "No scheduled topics. Choose 'every day/week/month' above, or type \"every week learn about …\" in chat.")]));
 
-  const kinds = { web: "🌐 page", file: "📄 file", note: "📝 note", study_notes: "📚 study notes" };
+  const kinds = { web: "Web page", file: "File", note: "Note", study_notes: "Study notes" };
   $("#know-list").replaceChildren(...(know.length ? know.map((k) => {
     const view = el("div", { class: "result-box", hidden: "" });
     return el("div", { class: "item" },

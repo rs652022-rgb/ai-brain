@@ -316,6 +316,7 @@ function setWake(on) {
 // ---------- Controls ----------
 
 $("#mic").addEventListener("click", micOnce);
+document.addEventListener("click", (e) => { if (e.target.closest("#hero-talk")) setTalk(true); });
 $("#talk-toggle").addEventListener("click", () => setTalk(!V.talk));
 $("#wake-toggle").addEventListener("click", () => setWake(!V.wake));
 $("#speak-toggle").addEventListener("click", () => {

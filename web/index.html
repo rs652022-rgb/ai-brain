@@ -3,12 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Brain</title>
+<title>Rahul's Brain</title>
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zalando+Sans:wght@400;500;600;700&family=Zalando+Sans+Expanded:wght@400;500;600;700&family=Zalando+Sans+SemiExpanded:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="dot"></span><strong id="brand-name">AI Brain</strong></div>
+  <div class="brand"><strong id="brand-name">Brain</strong></div>
   <div class="status" id="status">Connecting…</div>
 </header>
 
@@ -33,20 +37,20 @@
         <button data-mode="assistant" title="Neutral and task-focused">Assistant</button>
         <button data-mode="coach" title="Challenges you">Coach</button>
       </div>
-      <button class="ghost voice-btn" id="talk-toggle" title="Hands-free conversation: it listens, answers aloud, and listens again">🎙 Talk</button>
-      <button class="ghost voice-btn" id="wake-toggle" title="Listen for the wake word while this page is open">👂 Wake word</button>
-      <button class="ghost voice-btn on" id="speak-toggle" title="Read replies aloud">🔊</button>
-      <label class="check"><input type="checkbox" id="use-sealed"> Use sealed memories (local model only)</label>
+      <button class="ghost voice-btn" id="talk-toggle" title="Hands-free conversation: it listens, answers aloud, and listens again"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg>Talk</button>
+      <button class="ghost voice-btn" id="wake-toggle" title="Listen for the wake word while this page is open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 1 1 12 0c0 3-2 4.5-3 5.5S13.5 17 13.5 19a2.5 2.5 0 0 1-5 0"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0"/></svg>Wake word</button>
+      <button class="ghost voice-btn on" id="speak-toggle" title="Read replies aloud" aria-label="Read replies aloud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
+      <label class="check"><input type="checkbox" id="use-sealed"> Use sealed memories</label>
       <button class="ghost" id="clear-chat">Clear chat</button>
     </div>
     <div class="voice-bar" id="voice-bar" hidden><span class="pulse"></span><span id="voice-state">Listening…</span>
       <button class="mini" id="voice-stop">Stop (Esc)</button></div>
     <div class="messages" id="messages"></div>
     <form class="composer" id="chat-form">
-      <textarea id="chat-input" rows="2" placeholder="Talk to yourself… Try /learn, /read <link>, /rule, /web (Enter to send)"></textarea>
-      <button type="button" id="mic" class="ghost" title="Speak (click, talk, pause to send)">🎤</button>
-      <button type="button" id="web-toggle" class="ghost" title="Search the web for this message">🌐 Web</button>
-      <button type="submit" class="primary" id="send">Send</button>
+      <textarea id="chat-input" rows="2" placeholder="Type, or tap the mic. Try /learn, /read, /rule, /web"></textarea>
+      <button type="button" id="mic" class="ghost" title="Speak (click, talk, pause to send)" aria-label="Speak"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button type="button" id="web-toggle" class="ghost" title="Search the web for this message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg><span class="label">Web</span></button>
+      <button type="submit" class="primary" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
   </section>
 
@@ -208,7 +212,7 @@
       <h2>AI models</h2>
       <p class="hint">Add a key for any provider. Free options are marked. The Brain tries providers from top to bottom: if one hits a free-tier limit or fails, the next one answers automatically.</p>
       <div class="row" style="margin:0 0 12px">
-        <button class="primary" id="discover-all">🔍 Auto-find free models</button>
+        <button class="primary" id="discover-all">Auto-find free models</button>
         <span class="hint" style="margin:0">Checks every provider with a key, tests its free models, and picks the best working ones with backups.</span>
       </div>
       <p class="note" id="discover-note"></p>
@@ -252,7 +256,7 @@
         <button id="v-install-whisper">Install local Whisper</button>
         <button id="v-install-piper">Install Piper</button>
         <button id="v-download">Download Piper voice</button>
-        <button id="v-test">🔊 Test voice</button>
+        <button id="v-test">Test voice</button>
       </div>
       <p class="note" id="v-note"></p>
       <p class="hint">Piper voice names look like <code>en_US-lessac-medium</code> (US English) or <code>en_GB-alba-medium</code>. Hindi voices such as <code>hi_IN-pratham-medium</code> are available if listed in the <a href="https://huggingface.co/rhasspy/piper-voices" target="_blank" rel="noopener">Piper voice list</a>.</p>
@@ -262,7 +266,7 @@
       <div class="row">
         <label for="web-mode" style="flex:0 0 auto">Search the web in chat</label>
         <select id="web-mode">
-          <option value="ask">Only when I ask (🌐 button, /web, "search the web for…")</option>
+          <option value="ask">Only when I ask (Web button, /web, "search the web for…")</option>
           <option value="auto">Automatically when it thinks it's needed</option>
           <option value="off">Never</option>
         </select>
