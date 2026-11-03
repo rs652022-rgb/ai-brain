@@ -1,0 +1,620 @@
+"""Local web server. Binds to 127.0.0.1 only, so nothing outside your laptop can reach it."""
+import logging
+from contextlib import asynccontextmanager
+
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+import base64
+import json
+import threading
+import time
+
+from fastapi import Response
+
+from . import config, core, db, identity, importer, interview, knowledge, llm, memory, settings, voice, web
+from .providers import PRESETS
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+
+def _start_scheduler():
+    """Runs research topics the owner scheduled. Checks every 10 minutes while the app is open."""
+    def loop():
+        time.sleep(5)
+        try:  # first time a free provider has a key: find its working free models and backups automatically
+            data = settings.load()
+            for pid in data.get("order", []):
+                p = settings.resolved(pid, data)
+                if pid not in llm.PAID_PROVIDERS and p["kind"] != "ollama" and p["api_key"] and not p["fallbacks"]:
+                    r = llm.discover(pid)
+                    db.audit("system", "models.discover", provider=pid, ok=r.get("ok"), model=r.get("model"))
+        except Exception as exc:
+            logging.getLogger("brain.scheduler").warning("Model discovery failed: %s", exc)
+        time.sleep(55)
+        while True:
+            try:
+                knowledge.run_due()
+            except Exception as exc:  # never let the timer die
+                logging.getLogger("brain.scheduler").warning("Scheduled learning failed: %s", exc)
+            time.sleep(600)
+    if config.os.environ.get("BRAIN_NO_SCHEDULER") != "1":
+        threading.Thread(target=loop, daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    db.init()
+    knowledge.init()
+    identity.ensure()
+    settings.load()
+    _start_scheduler()
+    db.audit("system", "startup", providers=settings.load().get("order", []))
+    yield
+
+
+app = FastAPI(title="AI Brain", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def _unexpected(request, exc):
+    """Show the real reason in the app instead of a bare 'Error 500'."""
+    from fastapi.responses import JSONResponse
+    logging.getLogger("brain.server").exception("Unexpected error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": f"Unexpected error: {exc.__class__.__name__}: {exc}"})
+WEB = config.ROOT / "web"
+
+
+def _err(exc: Exception, code: int = 400):
+    raise HTTPException(status_code=code, detail=str(exc))
+
+
+# ---------- Status ----------
+
+@app.get("/api/status")
+def status():
+    return {
+        "owner": config.OWNER_NAME,
+        **llm.status(),
+        "index": memory.index_coverage(),
+        "knowledge": knowledge.stats(),
+        "web_mode": settings.load().get("web_mode", "ask"),
+        "memory": memory.stats(),
+        "interview": interview.progress(),
+    }
+
+
+# ---------- Settings (providers and keys) ----------
+
+@app.get("/api/settings")
+def settings_get():
+    return {"settings": settings.masked(), "presets": PRESETS, "search_presets": web.SEARCH_PRESETS,
+            "voice_defaults": voice.DEFAULTS}
+
+
+class SettingsIn(BaseModel):
+    order: list[str]
+    providers: dict[str, dict]
+    embeddings: str = "auto"
+    cloud_private_tasks: bool = False
+    web_mode: str = "ask"
+    suggest_facts: bool = True
+    search_order: list[str] = Field(default_factory=lambda: ["duckduckgo"])
+    search: dict[str, dict] = Field(default_factory=dict)
+    voice: dict = Field(default_factory=dict)
+
+
+@app.put("/api/settings")
+def settings_put(body: SettingsIn):
+    current = settings.load()
+    data = body.model_dump()
+    for group in ("providers", "search"):
+        for pid, cfg in (data.get(group) or {}).items():
+            key = cfg.get("api_key", "")
+            if key.startswith("••••"):  # unchanged masked key: keep the stored one
+                cfg["api_key"] = current.get(group, {}).get(pid, {}).get("api_key", "")
+    saved = settings.save(data)
+    db.audit("owner", "settings.save", order=saved["order"], embeddings=saved["embeddings"],
+             cloud_private_tasks=saved["cloud_private_tasks"])
+    return {"settings": settings.masked(saved), "presets": PRESETS, "search_presets": web.SEARCH_PRESETS,
+            "voice_defaults": voice.DEFAULTS}
+
+
+@app.post("/api/settings/test/{pid}")
+def settings_test(pid: str):
+    if pid not in PRESETS:
+        _err(Exception("Unknown provider"), 404)
+    result = llm.test_provider(pid)
+    db.audit("owner", "provider.test", provider=pid, ok=result["ok"])
+    return result
+
+
+@app.get("/api/settings/models/{pid}")
+def settings_models(pid: str):
+    if pid not in PRESETS:
+        _err(Exception("Unknown provider"), 404)
+    try:
+        return {"models": llm.list_models(pid)}
+    except llm.ProviderError as exc:
+        _err(exc, 502)
+
+
+@app.post("/api/settings/discover")
+def settings_discover():
+    results = llm.discover_all()
+    db.audit("owner", "models.discover", results=[{k: r.get(k) for k in ("provider", "ok", "model")} for r in results])
+    return {"results": results, "settings": settings.masked()}
+
+
+@app.post("/api/settings/discover/{pid}")
+def settings_discover_one(pid: str):
+    if pid not in PRESETS:
+        _err(Exception("Unknown provider"), 404)
+    r = llm.discover(pid)
+    db.audit("owner", "models.discover", provider=pid, ok=r.get("ok"), model=r.get("model"))
+    return {"result": r, "settings": settings.masked()}
+
+
+@app.post("/api/settings/test-search")
+def settings_test_search():
+    try:
+        results = web.search("weather in Delhi today", n=3)
+        return {"ok": True, "engine": results[0]["engine"], "results": results}
+    except web.WebError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/memories/reindex")
+def reindex():
+    r = memory.reindex()
+    r["knowledge_chunks"] = knowledge.reindex()
+    return r
+
+
+# ---------- Voice ----------
+
+@app.get("/api/voice")
+def voice_info():
+    return {"config": voice.cfg(), **voice.capabilities()}
+
+
+class AudioIn(BaseModel):
+    data_base64: str
+    filename: str = "speech.webm"
+
+
+@app.post("/api/voice/transcribe")
+def voice_transcribe(body: AudioIn):
+    try:
+        audio = base64.b64decode(body.data_base64)
+        if len(audio) > 25_000_000:
+            raise voice.VoiceError("Recording is too long.")
+        return {"text": voice.transcribe(audio, body.filename)}
+    except (voice.VoiceError, ValueError) as exc:
+        _err(exc)
+
+
+class SpeakIn(BaseModel):
+    text: str
+
+
+@app.post("/api/voice/speak")
+def voice_speak(body: SpeakIn):
+    try:
+        audio, mime = voice.speak(body.text)
+        return Response(content=audio, media_type=mime)
+    except voice.VoiceError as exc:
+        _err(exc)
+
+
+class InstallIn(BaseModel):
+    component: str
+
+
+@app.post("/api/voice/install")
+def voice_install(body: InstallIn):
+    try:
+        r = voice.install(body.component)
+        db.audit("owner", "voice.install", component=body.component)
+        return r
+    except voice.VoiceError as exc:
+        _err(exc)
+
+
+class VoiceNameIn(BaseModel):
+    name: str
+
+
+@app.post("/api/voice/download")
+def voice_download(body: VoiceNameIn):
+    try:
+        r = voice.download_piper_voice(body.name.strip())
+        db.audit("owner", "voice.download", voice=body.name)
+        return r
+    except voice.VoiceError as exc:
+        _err(exc)
+
+
+# ---------- Learning (only ever started by the owner) ----------
+
+class LearnTopicIn(BaseModel):
+    topic: str
+    instruction: str = ""
+    frequency: str = "once"    # once | daily | weekly | monthly
+
+
+@app.post("/api/learn/topic")
+def learn_topic(body: LearnTopicIn):
+    try:
+        if body.frequency != "once":
+            t = knowledge.add_topic(body.topic, body.instruction, body.frequency, run_now=False)
+            r = knowledge.research(body.topic, body.instruction)
+            return {"result": r, "scheduled": t}
+        return {"result": knowledge.research(body.topic, body.instruction)}
+    except (web.WebError, ValueError) as exc:
+        _err(exc)
+    except llm.ModelUnavailable as exc:
+        _err(exc, 503)
+
+
+class LearnUrlIn(BaseModel):
+    url: str
+    instruction: str = ""
+
+
+@app.post("/api/learn/url")
+def learn_url(body: LearnUrlIn):
+    try:
+        return knowledge.learn_url(body.url, body.instruction)
+    except web.WebError as exc:
+        _err(exc)
+    except llm.ModelUnavailable as exc:
+        _err(exc, 503)
+
+
+class LearnFileIn(BaseModel):
+    name: str
+    data_base64: str
+    instruction: str = ""
+    sensitivity: str = "personal"
+
+
+@app.post("/api/learn/file")
+def learn_file(body: LearnFileIn):
+    try:
+        data = base64.b64decode(body.data_base64)
+        if len(data) > 25_000_000:
+            raise web.WebError("File is larger than 25 MB.")
+        return knowledge.learn_file(body.name, data, body.instruction, body.sensitivity)
+    except (web.WebError, ValueError) as exc:
+        _err(exc)
+    except llm.ModelUnavailable as exc:
+        _err(exc, 503)
+
+
+class NoteIn(BaseModel):
+    text: str
+    title: str = ""
+
+
+@app.post("/api/learn/note")
+def learn_note(body: NoteIn):
+    if not body.text.strip():
+        _err(Exception("Note is empty"))
+    return knowledge.learn_note(body.text, body.title)
+
+
+class SaveSourcesIn(BaseModel):
+    urls: list[str]
+    instruction: str = ""
+
+
+@app.post("/api/learn/save-sources")
+def save_sources(body: SaveSourcesIn):
+    """The owner chose to keep the web pages used in a chat answer."""
+    saved, failed = [], []
+    for u in body.urls[:6]:
+        try:
+            saved.append(knowledge.learn_url(u, "")["source"])
+        except web.WebError as exc:
+            failed.append({"url": u, "error": str(exc)})
+    return {"saved": saved, "failed": failed}
+
+
+@app.get("/api/knowledge")
+def knowledge_list():
+    return knowledge.sources()
+
+
+@app.get("/api/knowledge/{sid}")
+def knowledge_get(sid: int):
+    return {"text": knowledge.source_text(sid)}
+
+
+@app.delete("/api/knowledge/{sid}")
+def knowledge_delete(sid: int):
+    if not knowledge.delete_source(sid):
+        _err(Exception("Not found"), 404)
+    return {"ok": True}
+
+
+@app.get("/api/topics")
+def topics_list():
+    return knowledge.topics()
+
+
+class TopicPatch(BaseModel):
+    active: bool
+
+
+@app.patch("/api/topics/{tid}")
+def topics_patch(tid: int, body: TopicPatch):
+    knowledge.set_topic_active(tid, body.active)
+    return {"ok": True}
+
+
+@app.delete("/api/topics/{tid}")
+def topics_delete(tid: int):
+    knowledge.delete_topic(tid)
+    return {"ok": True}
+
+
+class RuleIn(BaseModel):
+    text: str
+
+
+@app.get("/api/rules")
+def rules_list():
+    return memory.rules()
+
+
+@app.post("/api/rules")
+def rules_add(body: RuleIn):
+    try:
+        return memory.add_rule(body.text)
+    except ValueError as exc:
+        _err(exc)
+
+
+# ---------- Chat ----------
+
+class ChatIn(BaseModel):
+    message: str
+    mode: str = "mirror"
+    use_sealed: bool = False
+    web: bool | None = None   # True: search the web for this message (the owner pressed the Web button)
+    voice: bool = False       # spoken turn: short, natural, speakable replies
+
+
+@app.post("/api/chat")
+def chat(body: ChatIn):
+    try:
+        return core.think(body.message, mode=body.mode, use_sealed=body.use_sealed, web_override=body.web or None,
+                          voice=body.voice)
+    except llm.ModelUnavailable as exc:
+        _err(exc, 503)
+    except ValueError as exc:
+        _err(exc)
+
+
+@app.post("/api/chat/stream")
+def chat_stream(body: ChatIn):
+    """Streams the reply as it is written (one JSON object per line), so text and speech start at once."""
+    from fastapi.responses import StreamingResponse
+
+    def events():
+        try:
+            for kind, value in core.think_stream(body.message, mode=body.mode, use_sealed=body.use_sealed,
+                                                 web_override=body.web or None, voice=body.voice):
+                if kind == "final":
+                    yield json.dumps({"type": "final", "result": value}, ensure_ascii=False, default=str) + "\n"
+                else:
+                    yield json.dumps({"type": kind, "text": value}, ensure_ascii=False) + "\n"
+        except (llm.ModelUnavailable, ValueError) as exc:
+            yield json.dumps({"type": "error", "error": str(exc)}) + "\n"
+        except Exception as exc:
+            logging.getLogger("brain.server").exception("Streaming chat failed")
+            yield json.dumps({"type": "error", "error": f"Unexpected error: {exc.__class__.__name__}: {exc}"}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/chat/history")
+def chat_history():
+    return core.history()
+
+
+@app.delete("/api/chat/history")
+def chat_clear():
+    core.clear_history()
+    return {"ok": True}
+
+
+# ---------- Memories ----------
+
+class MemoryIn(BaseModel):
+    content: str
+    type: str = "episodic"
+    sensitivity: str = "personal"
+    happened_on: str = ""
+    tags: list[str] = Field(default_factory=list)
+    source: str = "manual"
+
+
+class MemoryPatch(BaseModel):
+    content: str | None = None
+    type: str | None = None
+    sensitivity: str | None = None
+    happened_on: str | None = None
+    tags: list[str] | None = None
+    locked: bool | None = None
+
+
+@app.get("/api/memories")
+def memories(type: str | None = None, q: str = ""):
+    return memory.list_all(type=type or None, query=q)
+
+
+@app.post("/api/memories")
+def add_memory(body: MemoryIn):
+    try:
+        return memory.add(body.content, type=body.type, source=body.source, sensitivity=body.sensitivity,
+                          happened_on=body.happened_on, tags=body.tags)
+    except ValueError as exc:
+        _err(exc)
+
+
+@app.patch("/api/memories/{mem_id}")
+def edit_memory(mem_id: int, body: MemoryPatch):
+    try:
+        return memory.update(mem_id, actor="owner", **body.model_dump())
+    except KeyError:
+        _err(Exception("Memory not found"), 404)
+
+
+@app.delete("/api/memories/{mem_id}")
+def forget_memory(mem_id: int):
+    if not memory.forget(mem_id):
+        _err(Exception("Memory not found"), 404)
+    return {"ok": True}
+
+
+@app.get("/api/memories/search")
+def search_memories(q: str):
+    return memory.search(q, limit=15)
+
+
+@app.get("/api/pending")
+def pending():
+    return memory.pending()
+
+
+class ApproveIn(BaseModel):
+    sensitivity: str = "personal"
+
+
+@app.post("/api/pending/{pid}/approve")
+def approve(pid: int, body: ApproveIn):
+    try:
+        return memory.approve(pid, sensitivity=body.sensitivity)
+    except KeyError:
+        _err(Exception("Not found"), 404)
+
+
+@app.post("/api/pending/{pid}/reject")
+def reject(pid: int):
+    memory.reject(pid)
+    return {"ok": True}
+
+
+# ---------- Journal ----------
+
+class JournalIn(BaseModel):
+    text: str
+    sensitivity: str = "personal"
+    date: str = ""
+
+
+@app.post("/api/journal")
+def journal(body: JournalIn):
+    try:
+        mem = memory.add(body.text, type="episodic", source="journal", sensitivity=body.sensitivity,
+                         happened_on=body.date, tags=["journal"])
+        core.extract_memories(body.text, source="journal")
+        return mem
+    except ValueError as exc:
+        _err(exc)
+
+
+@app.get("/api/journal")
+def journal_list():
+    return [m for m in memory.list_all(type="episodic", limit=500) if m["source"] == "journal"]
+
+
+# ---------- Interview ----------
+
+@app.get("/api/interview/next")
+def interview_next():
+    return {"next": interview.next_questions(1), "progress": interview.progress()}
+
+
+class AnswerIn(BaseModel):
+    question_id: str
+    answer: str
+    sensitivity: str = "personal"
+
+
+@app.post("/api/interview/answer")
+def interview_answer(body: AnswerIn):
+    try:
+        mem = interview.answer(body.question_id, body.answer, sensitivity=body.sensitivity)
+        return {"memory": mem, "next": interview.next_questions(1), "progress": interview.progress()}
+    except (KeyError, ValueError) as exc:
+        _err(exc)
+
+
+# ---------- Identity ----------
+
+class IdentityIn(BaseModel):
+    yaml: str
+
+
+@app.get("/api/identity")
+def identity_get():
+    return {"yaml": identity.raw(), "versions": identity.versions()}
+
+
+@app.put("/api/identity")
+def identity_put(body: IdentityIn):
+    try:
+        identity.save_raw(body.yaml)
+        return {"yaml": identity.raw(), "versions": identity.versions()}
+    except (yaml.YAMLError, ValueError) as exc:
+        _err(Exception(f"Could not save: {exc}"))
+
+
+@app.post("/api/identity/restore/{name}")
+def identity_restore(name: str):
+    try:
+        identity.restore(name)
+        return {"yaml": identity.raw(), "versions": identity.versions()}
+    except FileNotFoundError:
+        _err(Exception("Version not found"), 404)
+
+
+# ---------- Import ----------
+
+class ImportIn(BaseModel):
+    text: str
+    owner_name: str = config.OWNER_NAME
+    chat_with: str = ""
+
+
+@app.post("/api/import/whatsapp")
+def import_whatsapp(body: ImportIn):
+    try:
+        result = importer.import_whatsapp(body.text, body.owner_name, body.chat_with)
+        db.audit("owner", "import.whatsapp", chat_with=body.chat_with, created=result["memories_created"])
+        return result
+    except ValueError as exc:
+        _err(exc)
+
+
+# ---------- Audit ----------
+
+@app.get("/api/audit")
+def audit():
+    return db.recent_audit(200)
+
+
+# ---------- Web app ----------
+
+app.mount("/static", StaticFiles(directory=WEB), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(WEB / "index.html")

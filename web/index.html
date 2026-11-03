@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Brain</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot"></span><strong id="brand-name">AI Brain</strong></div>
+  <div class="status" id="status">Connecting…</div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="learn">Learn</button>
+  <button data-tab="journal">Journal</button>
+  <button data-tab="interview">Interview</button>
+  <button data-tab="memories">Memories <span class="badge" id="pending-badge" hidden></span></button>
+  <button data-tab="identity">Identity</button>
+  <button data-tab="import">Import</button>
+  <button data-tab="activity">Activity</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main>
+  <!-- CHAT -->
+  <section id="tab-chat" class="tab active">
+    <div class="chat-head">
+      <div class="seg" id="mode">
+        <button data-mode="mirror" class="on" title="Speaks as you, to you">Mirror</button>
+        <button data-mode="assistant" title="Neutral and task-focused">Assistant</button>
+        <button data-mode="coach" title="Challenges you">Coach</button>
+      </div>
+      <button class="ghost voice-btn" id="talk-toggle" title="Hands-free conversation: it listens, answers aloud, and listens again">🎙 Talk</button>
+      <button class="ghost voice-btn" id="wake-toggle" title="Listen for the wake word while this page is open">👂 Wake word</button>
+      <button class="ghost voice-btn on" id="speak-toggle" title="Read replies aloud">🔊</button>
+      <label class="check"><input type="checkbox" id="use-sealed"> Use sealed memories (local model only)</label>
+      <button class="ghost" id="clear-chat">Clear chat</button>
+    </div>
+    <div class="voice-bar" id="voice-bar" hidden><span class="pulse"></span><span id="voice-state">Listening…</span>
+      <button class="mini" id="voice-stop">Stop (Esc)</button></div>
+    <div class="messages" id="messages"></div>
+    <form class="composer" id="chat-form">
+      <textarea id="chat-input" rows="2" placeholder="Talk to yourself… Try /learn, /read <link>, /rule, /web (Enter to send)"></textarea>
+      <button type="button" id="mic" class="ghost" title="Speak (click, talk, pause to send)">🎤</button>
+      <button type="button" id="web-toggle" class="ghost" title="Search the web for this message">🌐 Web</button>
+      <button type="submit" class="primary" id="send">Send</button>
+    </form>
+  </section>
+
+  <!-- LEARN -->
+  <section id="tab-learn" class="tab">
+    <p class="hint">Your Brain learns only what you tell it to. Everything it learns is listed below, with the source and your instruction, and you can delete any of it.</p>
+    <div class="card">
+      <h2>Learn a topic from the web</h2>
+      <input id="lt-topic" placeholder="Topic, e.g. Groq API pricing">
+      <textarea id="lt-instr" rows="2" placeholder="Your instruction (optional), e.g. Focus only on free-tier limits and how they changed this year"></textarea>
+      <div class="row">
+        <select id="lt-freq"><option value="once">Once, now</option><option value="daily">Now, then every day</option>
+          <option value="weekly">Now, then every week</option><option value="monthly">Now, then every month</option></select>
+        <button class="primary" id="lt-go">Learn</button>
+      </div>
+      <p class="note" id="lt-note"></p>
+      <div id="lt-result"></div>
+    </div>
+    <div class="card">
+      <h2>Learn from a link</h2>
+      <input id="lu-url" placeholder="https://…">
+      <textarea id="lu-instr" rows="2" placeholder="Your instruction (optional), e.g. Note the pricing table and the refund policy"></textarea>
+      <div class="row"><button class="primary" id="lu-go">Read and learn</button></div>
+      <p class="note" id="lu-note"></p>
+      <div id="lu-result"></div>
+    </div>
+    <div class="card">
+      <h2>Learn from a document</h2>
+      <p class="hint">PDF, Word (.docx), TXT, Markdown, HTML, CSV, JSON. Sealed documents are only summarised by your local model.</p>
+      <input type="file" id="lf-file" accept=".pdf,.docx,.txt,.md,.html,.htm,.csv,.json">
+      <textarea id="lf-instr" rows="2" placeholder="Your instruction (optional), e.g. Learn my company's service prices and terms"></textarea>
+      <div class="row">
+        <select id="lf-sens"><option value="personal">Personal</option><option value="private">Private</option><option value="sealed">Sealed</option></select>
+        <button class="primary" id="lf-go">Learn this file</button>
+      </div>
+      <p class="note" id="lf-note"></p>
+      <div id="lf-result"></div>
+    </div>
+    <div class="card">
+      <h2>Rules you've taught it</h2>
+      <p class="hint">Standing instructions it follows in every conversation, like "Always reply to clients in formal English." You can also type "from now on …" in chat.</p>
+      <div class="row"><input id="rule-text" placeholder="From now on…"><button class="primary" id="rule-add">Add rule</button></div>
+      <div id="rule-list" class="list" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h2>Scheduled research</h2>
+      <p class="hint">Topics it checks on a schedule while the app is open. Only topics you add are ever researched.</p>
+      <div id="topic-list" class="list"></div>
+    </div>
+    <div class="card">
+      <h2>Knowledge library</h2>
+      <div id="know-list" class="list"></div>
+    </div>
+  </section>
+
+  <!-- JOURNAL -->
+  <section id="tab-journal" class="tab">
+    <div class="card">
+      <h2>Today's journal</h2>
+      <p class="hint">Two to five minutes: what happened, who you met, how you felt, what you decided. Speak it with your keyboard's mic if typing is slow.</p>
+      <textarea id="journal-text" rows="7" placeholder="Today I…"></textarea>
+      <div class="row">
+        <input type="date" id="journal-date">
+        <select id="journal-sens">
+          <option value="personal">Personal</option><option value="private">Private</option>
+          <option value="sealed">Sealed</option><option value="public">Public</option>
+        </select>
+        <button class="primary" id="journal-save">Save entry</button>
+      </div>
+      <p class="note" id="journal-note"></p>
+    </div>
+    <h3>Past entries</h3>
+    <div id="journal-list" class="list"></div>
+  </section>
+
+  <!-- INTERVIEW -->
+  <section id="tab-interview" class="tab">
+    <div class="card">
+      <div class="progress"><div id="iv-bar"></div></div>
+      <p class="hint" id="iv-progress"></p>
+      <p class="theme" id="iv-theme"></p>
+      <h2 id="iv-question">Loading…</h2>
+      <textarea id="iv-answer" rows="6" placeholder="Answer in your own words. Longer and more honest is better."></textarea>
+      <div class="row">
+        <select id="iv-sens">
+          <option value="personal">Personal</option><option value="private">Private</option><option value="sealed">Sealed</option>
+        </select>
+        <button class="primary" id="iv-save">Save and next</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- MEMORIES -->
+  <section id="tab-memories" class="tab">
+    <div class="card" id="pending-card" hidden>
+      <h2>Waiting for your approval</h2>
+      <p class="hint">The Brain noticed these facts. Nothing is saved until you approve it.</p>
+      <div id="pending-list" class="list"></div>
+    </div>
+    <div class="card">
+      <h2>Add a memory</h2>
+      <textarea id="mem-text" rows="3" placeholder="A fact, a story, or how you do something"></textarea>
+      <div class="row">
+        <select id="mem-type">
+          <option value="semantic">Fact (semantic)</option><option value="episodic">Event (episodic)</option>
+          <option value="procedural">How I do it (procedural)</option><option value="working">Right now (working)</option>
+        </select>
+        <select id="mem-sens">
+          <option value="personal">Personal</option><option value="private">Private</option>
+          <option value="sealed">Sealed</option><option value="public">Public</option>
+        </select>
+        <button class="primary" id="mem-add">Add</button>
+      </div>
+    </div>
+    <div class="row filters">
+      <input id="mem-q" placeholder="Search memories">
+      <select id="mem-filter">
+        <option value="">All types</option><option value="episodic">Events</option><option value="semantic">Facts</option>
+        <option value="procedural">How-tos</option><option value="working">Right now</option>
+      </select>
+    </div>
+    <div id="mem-list" class="list"></div>
+  </section>
+
+  <!-- IDENTITY -->
+  <section id="tab-identity" class="tab">
+    <div class="card">
+      <h2>Identity File</h2>
+      <p class="hint">This is who your Brain is. Replace every "Fill in" and "Example" line with your own words, and paste real messages you wrote under writing_samples. Every save keeps the previous version.</p>
+      <textarea id="id-yaml" rows="28" spellcheck="false" class="mono"></textarea>
+      <div class="row">
+        <button class="primary" id="id-save">Save Identity File</button>
+        <select id="id-versions"><option value="">Restore an earlier version…</option></select>
+        <button class="ghost" id="id-restore">Restore</button>
+      </div>
+      <p class="note" id="id-note"></p>
+    </div>
+  </section>
+
+  <!-- IMPORT -->
+  <section id="tab-import" class="tab">
+    <div class="card">
+      <h2>Import a WhatsApp chat</h2>
+      <p class="hint">In WhatsApp: open a chat → More → Export chat → Without media. Open the .txt file here. Only your own messages are kept; other people's messages are not stored.</p>
+      <div class="row">
+        <input type="file" id="wa-file" accept=".txt">
+        <input id="wa-owner" placeholder="Your name as it appears in the chat">
+        <input id="wa-with" placeholder="Chat with (optional)">
+        <button class="primary" id="wa-import">Import</button>
+      </div>
+      <p class="note" id="wa-note"></p>
+      <div id="wa-samples"></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <h2>AI models</h2>
+      <p class="hint">Add a key for any provider. Free options are marked. The Brain tries providers from top to bottom: if one hits a free-tier limit or fails, the next one answers automatically.</p>
+      <div class="row" style="margin:0 0 12px">
+        <button class="primary" id="discover-all">🔍 Auto-find free models</button>
+        <span class="hint" style="margin:0">Checks every provider with a key, tests its free models, and picks the best working ones with backups.</span>
+      </div>
+      <p class="note" id="discover-note"></p>
+      <div id="prov-list" class="list"></div>
+      <div class="row">
+        <select id="prov-add"></select>
+        <button id="prov-add-btn">Add provider</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Voice</h2>
+      <p class="hint">Talk to your Brain and hear it answer. Microphone access is asked by your browser the first time.</p>
+      <div class="vgrid">
+        <label>Listening (speech to text)
+          <select id="v-stt">
+            <option value="browser">Browser (Chrome/Edge): free, instant. Audio goes to Google/Microsoft</option>
+            <option value="local">Local Whisper: free and private, on your laptop</option>
+            <option value="groq">Groq Whisper: free tier, very fast and accurate (uses your Groq key)</option>
+          </select></label>
+        <label>Speaking (text to speech)
+          <select id="v-tts">
+            <option value="edge">Natural voice (Microsoft neural): free, very human. Needs internet</option>
+            <option value="browser">Browser voice: free, offline, instant, more robotic</option>
+            <option value="piper">Piper: free and private, on your laptop</option>
+            <option value="off">Don't speak</option>
+          </select></label>
+        <label>Language
+          <select id="v-lang"><option value="en">English / Hinglish</option><option value="hi">Hindi</option><option value="auto">Detect automatically (Whisper only)</option></select></label>
+        <label>Natural voice
+          <select id="v-evoice"></select></label>
+        <label>Browser voice
+          <select id="v-bvoice"><option value="">Automatic (Indian English if available)</option></select></label>
+        <label>Speaking speed <input type="range" id="v-rate" min="0.7" max="1.5" step="0.05"></label>
+        <label>Wake word <input id="v-wake" placeholder="hey brain"></label>
+        <label>Local Whisper size
+          <select id="v-wmodel"><option value="tiny">Tiny: fastest</option><option value="base">Base: good balance</option>
+            <option value="small">Small: more accurate</option><option value="medium">Medium: best, needs a strong laptop</option></select></label>
+        <label>Piper voice <input id="v-pvoice" placeholder="en_US-lessac-medium" list="v-pvoices"><datalist id="v-pvoices"></datalist></label>
+      </div>
+      <div class="row">
+        <button id="v-install-whisper">Install local Whisper</button>
+        <button id="v-install-piper">Install Piper</button>
+        <button id="v-download">Download Piper voice</button>
+        <button id="v-test">🔊 Test voice</button>
+      </div>
+      <p class="note" id="v-note"></p>
+      <p class="hint">Piper voice names look like <code>en_US-lessac-medium</code> (US English) or <code>en_GB-alba-medium</code>. Hindi voices such as <code>hi_IN-pratham-medium</code> are available if listed in the <a href="https://huggingface.co/rhasspy/piper-voices" target="_blank" rel="noopener">Piper voice list</a>.</p>
+    </div>
+    <div class="card">
+      <h2>Web access</h2>
+      <div class="row">
+        <label for="web-mode" style="flex:0 0 auto">Search the web in chat</label>
+        <select id="web-mode">
+          <option value="ask">Only when I ask (🌐 button, /web, "search the web for…")</option>
+          <option value="auto">Automatically when it thinks it's needed</option>
+          <option value="off">Never</option>
+        </select>
+      </div>
+      <p class="hint" style="margin-top:8px">Web results in chat are used for that answer only. They're saved to the knowledge library only if you click "Save to knowledge" or ask it to learn.</p>
+      <h3>Search engines (tried in order)</h3>
+      <div id="search-list" class="list"></div>
+      <div class="row">
+        <select id="search-add"></select><button id="search-add-btn">Add search engine</button>
+        <button id="search-test">Test web search</button>
+      </div>
+      <p class="note" id="search-note"></p>
+    </div>
+    <div class="card">
+      <h2>Private work</h2>
+      <label class="check"><input type="checkbox" id="suggest-facts"> Suggest facts from my messages (I approve each one)</label>
+      <label class="check"><input type="checkbox" id="cloud-private"> Allow a cloud model to tag memories and notice facts when the local model (Ollama) is off</label>
+      <p class="hint">Off by default for privacy. With it off and no Ollama, the Brain still chats; it just doesn't auto-tag or suggest facts.</p>
+      <div class="row">
+        <label for="embed-choice" style="flex:0 0 auto">Search by meaning uses</label>
+        <select id="embed-choice">
+          <option value="auto">Automatic (Ollama, else Gemini, else OpenAI)</option>
+          <option value="ollama">Ollama (local)</option><option value="gemini">Gemini (free)</option>
+          <option value="openai">OpenAI (paid)</option><option value="none">Off (keyword search only)</option>
+        </select>
+        <button id="reindex">Re-index memories</button>
+      </div>
+      <p class="note" id="index-note"></p>
+    </div>
+    <div class="row"><button class="primary" id="settings-save">Save settings</button></div>
+    <p class="note" id="settings-note"></p>
+  </section>
+
+  <!-- ACTIVITY -->
+  <section id="tab-activity" class="tab">
+    <div class="card">
+      <h2>Activity log</h2>
+      <p class="hint">Everything the Brain and you have done. This log is append-only: it cannot be edited or deleted.</p>
+      <div id="audit-list" class="list mono small"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+<script src="/static/voice.js"></script>
+</body>
+</html>
