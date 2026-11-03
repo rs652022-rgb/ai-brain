@@ -493,6 +493,22 @@ def topics_delete(tid: int):
     return {"ok": True}
 
 
+class ForgetIn(BaseModel):
+    memory_ids: list[int] = Field(default_factory=list)
+    source_ids: list[int] = Field(default_factory=list)
+    clear_chat: bool = False
+
+
+@app.post("/api/forget")
+def forget_selected(body: ForgetIn):
+    """Delete the memories and learned sources the owner ticked after a 'forget ...' request."""
+    gone_m = sum(1 for i in body.memory_ids[:200] if memory.forget(i))
+    gone_k = sum(1 for i in body.source_ids[:200] if knowledge.delete_source(i))
+    if body.clear_chat:
+        core.clear_history()
+    return {"memories": gone_m, "knowledge": gone_k, "chat_cleared": body.clear_chat}
+
+
 class RuleIn(BaseModel):
     text: str
 

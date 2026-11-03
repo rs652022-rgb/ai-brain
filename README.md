@@ -69,6 +69,10 @@ Open the **Master** tab to change anything about your Brain:
 - **Security:** set a **Master PIN**. Once set, the PIN is needed to change Master Control and Settings (API keys). Turn on **Lock the whole app** to ask for the PIN before showing anything. Only a salted hash of the PIN is stored; after 5 wrong tries it waits a minute. Forgot it? Stop the app and delete the `"master"` section's `pin_hash` from `data/settings.json`.
 - **Data:** download a full backup (memories, journal, chats, learned knowledge, Identity File). API keys and the PIN are left out.
 
+## Forgetting things
+
+Say or type **"forget everything about mathematics"** (or "remove X from your memory", "X wali baat bhool jao"). The Brain lists every memory and learned source about it with a tick box; nothing is deleted until you press **Forget selected**. You can also clear the conversation in the same step. This works even when your AI models are out of free quota.
+
 ## How it learns (only from your instructions)
 
 The Brain never decides by itself to learn something. It learns when you tell it to, in the **Learn** tab or in chat:

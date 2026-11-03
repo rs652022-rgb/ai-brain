@@ -27,6 +27,25 @@ class ModelUnavailable(RuntimeError):
     pass
 
 
+def friendly_failure(errors: list[str]) -> str:
+    """One clear sentence about what went wrong and what to do, then the raw details."""
+    cloud = [e for e in errors if not e.startswith("ollama:")]
+    text = " | ".join(errors)
+    if cloud and all("quota" in e or "rate limit" in e for e in cloud):
+        main = ("Your AI models have used up their free limit for now. Free limits reset over time (Gemini's daily). "
+                "To keep talking, add a second free provider: Settings → AI models → add Groq or OpenRouter → "
+                "Auto-find free models.")
+    elif cloud and all("key rejected" in e or "no API key" in e for e in cloud):
+        main = "The API key was rejected. Open Settings → AI models, paste the key again and press Test."
+    elif cloud and all("busy" in e or "HTTP 50" in e for e in cloud):
+        main = "The AI service is busy right now. Try again in a minute, or add a second provider in Settings."
+    elif not cloud:
+        main = "No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq)."
+    else:
+        main = "No AI model could answer right now."
+    return f"{main}\n\nDetails: {text}"
+
+
 class ProviderError(RuntimeError):
     def __init__(self, pid: str, message: str, retryable: bool = True, status: int = 0):
         super().__init__(f"{pid}: {message}")
@@ -242,8 +261,8 @@ def chat(system: str, messages: list[dict], private: bool = False, json_mode: bo
     if private:
         raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
     if not errors:
-        raise ModelUnavailable("No provider is set up. Open Settings and add a free API key.")
-    raise ModelUnavailable("No provider could answer. " + " | ".join(errors))
+        raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
+    raise ModelUnavailable(friendly_failure(errors))
 
 
 # ---------- Streaming (words appear and are spoken as they are written) ----------
@@ -372,8 +391,8 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
     if private:
         raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
     if not errors:
-        raise ModelUnavailable("No provider is set up. Open Settings and add a free API key.")
-    raise ModelUnavailable("No provider could answer. " + " | ".join(errors))
+        raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
+    raise ModelUnavailable(friendly_failure(errors))
 
 
 def test_provider(pid: str) -> dict:

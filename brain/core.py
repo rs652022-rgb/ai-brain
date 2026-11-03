@@ -42,9 +42,29 @@ WEB_ASK = re.compile(r"\b(search (the )?(web|internet|online)|search for|look (i
 
 # ---------- Understanding the owner's instruction ----------
 
+_FORGET_WORDS = set("forget remove delete erase wipe clear these this that those them it from your my memory memories "
+                    "knowledge brain please all about the because was not talking related everything anything stuff "
+                    "things thing topics topic you can could would should and also mat karo kar do hatao hata bhool jao "
+                    "jao sab ye yeh wo woh se ko i me wali wala baat baare bare".split())
+_FORGET_RE = re.compile(r"^\s*(?:please\s+)?(?:forget|/forget)\b|\b(?:forget|remove|delete|erase|wipe)\b.*\b(?:memory|memories|knowledge)\b"
+                        r"|\b(?:bhool\s+jao|hata\s+do|hatao)\b", re.I)
+
+
+def forget_topic(message: str) -> str:
+    words = [w for w in re.findall(r"[\w\u0900-\u097F']+", message) if w.lower() not in _FORGET_WORDS]
+    seen, out = set(), []
+    for w in words:
+        if w.lower() not in seen:
+            seen.add(w.lower()); out.append(w)
+    return " ".join(out).strip()
+
+
 def parse_command(message: str) -> tuple[str, dict]:
     m = message.strip()
     low = m.lower()
+
+    if _FORGET_RE.search(m) and not URL_RE.search(m):
+        return "forget", {"topic": forget_topic(m)}
 
     # Everyday commands (typed or spoken)
     mode = re.match(r"^(?:please\s+)?(?:switch|change|go)\s+(?:to\s+)?(mirror|assistant|coach)(?:\s+mode)?\W*$", low)
@@ -302,6 +322,26 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
             mem = memory.add(args["text"], type="semantic", source="chat")
             return {"done": _reply(message, f"Got it, I'll remember that: {mem['content']}", mode, conversation,
                                    action="remember", memory_id=mem["id"])}
+        if action == "forget":
+            topic = args["topic"]
+            found_m = memory.search(topic, limit=25, include_sealed=True) if topic else []
+            found_k, seen = [], set()
+            for k in (knowledge.search(topic, limit=25, include_sealed=True) if topic else []):
+                if k["source_id"] not in seen:
+                    seen.add(k["source_id"])
+                    found_k.append({"source_id": k["source_id"], "title": k["title"], "kind": k["kind"]})
+            n = len(found_m) + len(found_k)
+            if not topic:
+                text = "Tell me what to forget, for example: \"forget everything about mathematics\"."
+            elif not n:
+                text = (f"I couldn't find anything about \"{topic}\" in my memories or learned knowledge. "
+                        "If it only came up in this chat, press Clear chat and it's gone.")
+            else:
+                text = (f"I found {n} thing{'s' if n != 1 else ''} about \"{topic}\". Tick what I should forget, "
+                        "then press Forget selected. Nothing is deleted until you do.")
+            return {"done": _reply(message, text, mode, conversation, action="forget", forget={
+                "topic": topic, "memories": [{"id": x["id"], "content": x["content"][:220]} for x in found_m],
+                "knowledge": found_k})}
         if action == "rule":
             r = memory.add_rule(args["text"])
             return {"done": _reply(message, f"Got it. I'll follow this from now on:\n\"{r['content']}\"\n\n"

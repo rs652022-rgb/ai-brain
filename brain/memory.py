@@ -131,11 +131,62 @@ def forget(mem_id: int) -> bool:
 
 _WORD = re.compile(r"[a-zA-Zऀ-ॿ0-9']+")
 _STOP = set("the a an and or but to of in on for with is are was were i me my you your it this that what how why "
-            "when do did does be have has had about can could should would will".split())
+            "when do did does be have has had about can could should would will just also from them they there "
+            "here then than tell know want need like get got make please okay yes not now today "
+            # common Hindi/Hinglish fillers, so they don't count as topic matches
+            "hai hain kya kar karo karna mein main mera meri mere tum tumhara aap yeh woh aur toh bhi nahi nahin nhi "
+            "kuch kuchh sab ho hun hoon tha thi the ka ki ke ko se par ek bas acha accha haan batao wala wali "
+            "kaise kaisa theek thik badhiya hello hey hii".split())
+
+# Small talk never needs memories: recalling for "hello" only pulls in unrelated things.
+_SMALL_TALK = set("hi hii hello hey hlo namaste namaskar hola yo kaise kaisa kaisi ho hai hain kya haal chal raha rahi "
+                  "sab badhiya theek thik tum batao aap how are you doing good morning afternoon evening night ok okay "
+                  "thanks thank you thx bye yes no haan nahi nahin kuch kuchh acha accha hmm sure cool great nice "
+                  "what's up whats sup bhai yaar".split())
+
+
+def is_small_talk(text: str) -> bool:
+    words = [w.lower() for w in _WORD.findall(text)]
+    return 0 < len(words) <= 8 and all(w in _SMALL_TALK for w in words)
+
+
+SEM_FLOOR = 0.62   # embedding models give unrelated texts ~0.4-0.6; below this, "similar meaning" is noise
+
+
+def select_relevant(cands: list[tuple], limit: int) -> list[tuple]:
+    """cands: (cosine or None, keyword_fraction, bonus, row). Returns [(score, row)] that are truly relevant.
+
+    A candidate counts only if its meaning clearly stands out (cosine above the floor AND above the typical
+    similarity of everything stored), or it shares real topic words with the query."""
+    cosines = [c for c, *_ in cands if c is not None]
+    standout = SEM_FLOOR
+    if len(cosines) >= 6:
+        arr = np.asarray(cosines)
+        standout = max(SEM_FLOOR, float(arr.mean() + 0.8 * arr.std()))
+    kept = []
+    for cos, kw, bonus, row in cands:
+        sem_ok = cos is not None and cos >= standout
+        kw_ok = kw > 0          # shares at least one real topic word (fillers and greetings are excluded)
+        if not (sem_ok or kw_ok):
+            continue
+        kept.append(((0.7 * cos if sem_ok else 0.0) + 0.5 * kw + bonus, row))
+    kept.sort(key=lambda x: x[0], reverse=True)
+    if kept:
+        top = kept[0][0]
+        kept = [k for k in kept if k[0] >= 0.6 * top]   # drop weak matches next to a strong one
+    return kept[:limit]
+
+
+def _stem(w: str) -> str:
+    for end in ("ing", "ies", "es", "ed", "s"):
+        if len(w) > len(end) + 2 and w.endswith(end):
+            return w[: -len(end)] + ("y" if end == "ies" else "")
+    return w
 
 
 def _keywords(text: str) -> set[str]:
-    return {w.lower() for w in _WORD.findall(text) if len(w) > 2 and w.lower() not in _STOP}
+    """Topic words: 3+ letters, not filler words, lightly stemmed (lives -> live)."""
+    return {_stem(w.lower()) for w in _WORD.findall(text) if len(w) > 2 and w.lower() not in _STOP}
 
 
 def _recency(created_at: str) -> float:
@@ -147,32 +198,28 @@ def _recency(created_at: str) -> float:
 
 
 def search(query: str, limit: int = config.RECALL_LIMIT, include_sealed: bool = False) -> list[dict]:
-    """Hybrid recall: meaning (embeddings), words (keywords) and recency."""
+    """Hybrid recall: meaning (embeddings) and words, with a strict relevance bar."""
+    if is_small_talk(query):
+        return []
     qvec, qlabel = _embed(query)
     qwords = _keywords(query)
     with db.session() as conn:
         rows = conn.execute("SELECT * FROM memories").fetchall()
-
-    scored = []
+    q = np.asarray(qvec, dtype=np.float32) if qvec is not None else None
+    cands = []
     for r in rows:
         if r["sensitivity"] == "sealed" and not include_sealed:
             continue
-        score = 0.0
-        if qvec is not None and r["embedding"] and r["embed_model"] == qlabel:
+        cos = None
+        if q is not None and r["embedding"] and r["embed_model"] == qlabel:
             v = np.frombuffer(r["embedding"], dtype=np.float32)
-            q = np.asarray(qvec, dtype=np.float32)
             if v.shape == q.shape:
-                score += 0.7 * float(v @ q / (np.linalg.norm(v) * np.linalg.norm(q) + 1e-9))
+                cos = float(v @ q / (np.linalg.norm(v) * np.linalg.norm(q) + 1e-9))
         words = _keywords(" ".join([r["content"], r["summary"] or "", r["tags"] or "", r["people"] or ""]))
-        if qwords:
-            score += 0.5 * len(qwords & words) / len(qwords)
-        score += 0.1 * _recency(r["created_at"])
-        if r["type"] == "semantic":
-            score += 0.05  # stable facts are usually useful
-        if score > 0.12:
-            scored.append((score, r))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [_row(r) | {"score": round(s, 3)} for s, r in scored[:limit]]
+        kw = len(qwords & words) / len(qwords) if qwords else 0.0
+        bonus = 0.08 * _recency(r["created_at"]) + (0.04 if r["type"] == "semantic" else 0.0)
+        cands.append((cos, kw, bonus, r))
+    return [_row(r) | {"score": round(s, 3)} for s, r in select_relevant(cands, limit)]
 
 
 def reindex() -> dict:

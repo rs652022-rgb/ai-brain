@@ -219,30 +219,30 @@ _WORD = re.compile(r"[a-zA-Zऀ-ॿ0-9']+")
 
 
 def search(query: str, limit: int = 5, include_sealed: bool = False) -> list[dict]:
+    from . import memory
+    if memory.is_small_talk(query):
+        return []
     qvec = llm.embed(query)
     qlabel = llm.embedding_label() if qvec is not None else ""
-    qwords = {w.lower() for w in _WORD.findall(query) if len(w) > 2}
+    qwords = memory._keywords(query)
     with db.session() as conn:
         rows = conn.execute(
             """SELECT c.id, c.text, c.embedding, c.embed_model, s.id AS source_id, s.title, s.url, s.kind,
                       s.sensitivity, s.created_at FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id"""
         ).fetchall()
-    scored = []
+    q = np.asarray(qvec, dtype=np.float32) if qvec is not None else None
+    cands = []
     for r in rows:
         if r["sensitivity"] == "sealed" and not include_sealed:
             continue
-        score = 0.0
-        if qvec is not None and r["embedding"] and r["embed_model"] == qlabel:
-            v, q = np.frombuffer(r["embedding"], dtype=np.float32), np.asarray(qvec, dtype=np.float32)
+        cos = None
+        if q is not None and r["embedding"] and r["embed_model"] == qlabel:
+            v = np.frombuffer(r["embedding"], dtype=np.float32)
             if v.shape == q.shape:
-                score += 0.7 * float(v @ q / (np.linalg.norm(v) * np.linalg.norm(q) + 1e-9))
-        if qwords:
-            words = {w.lower() for w in _WORD.findall(r["text"] + " " + r["title"])}
-            score += 0.5 * len(qwords & words) / len(qwords)
-        if r["kind"] == "study_notes":
-            score += 0.05
-        if score > 0.2:
-            scored.append((score, r))
+                cos = float(v @ q / (np.linalg.norm(v) * np.linalg.norm(q) + 1e-9))
+        kw = len(qwords & memory._keywords(r["text"] + " " + r["title"])) / len(qwords) if qwords else 0.0
+        cands.append((cos, kw, 0.04 if r["kind"] == "study_notes" else 0.0, r))
+    scored = memory.select_relevant(cands, limit * 3)
     scored.sort(key=lambda x: x[0], reverse=True)
     out, per_source = [], {}
     for s, r in scored:

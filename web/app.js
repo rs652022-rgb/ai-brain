@@ -177,8 +177,36 @@ async function loadChat() {
   hist.forEach((m) => addMsg(m.role, m.content));
 }
 
+function forgetPicker(f) {
+  const rows = [
+    ...f.memories.map((m) => ({ kind: "memory", id: m.id, label: m.content })),
+    ...f.knowledge.map((k) => ({ kind: "source", id: k.source_id, label: `Learned: ${k.title}` })),
+  ];
+  const box = el("div", { class: "forget" });
+  const checks = rows.map((r) => {
+    const c = el("input", { type: "checkbox" }); c.checked = true;
+    box.append(el("label", { class: "forget-row" }, c, el("span", {}, r.label)));
+    return [c, r];
+  });
+  const chat = el("input", { type: "checkbox" }); chat.checked = true;
+  box.append(el("label", { class: "forget-row" }, chat, el("span", {}, "Also clear this conversation")));
+  const go = el("button", { class: "mini", onclick: async () => {
+    const pick = checks.filter(([c]) => c.checked).map(([, r]) => r);
+    go.disabled = true;
+    const res = await api("/api/forget", { method: "POST", body: {
+      memory_ids: pick.filter((r) => r.kind === "memory").map((r) => r.id),
+      source_ids: pick.filter((r) => r.kind === "source").map((r) => r.id), clear_chat: chat.checked } });
+    if (res.chat_cleared) { emptyChat(); addMsg("assistant", `Forgotten: ${res.memories} memories and ${res.knowledge} learned sources. Conversation cleared.`); }
+    else go.textContent = `Forgotten: ${res.memories} memories, ${res.knowledge} sources`;
+    loadStatus();
+  } }, rows.length ? "Forget selected" : "Clear this conversation");
+  box.append(go);
+  return box;
+}
+
 function replyExtras(r) {
   const extra = el("div", {});
+  if (r.forget) extra.append(forgetPicker(r.forget));
   if (r.web_sources?.length) {
     const box = el("div", { class: "sources" }, el("strong", {}, r.action === "chat" ? "Web sources (not saved):" : "Sources learned:"),
       ...r.web_sources.map((s, i) => el("a", { href: s.url, target: "_blank", rel: "noopener" }, `[${i + 1}] ${s.title || s.url}`)));
@@ -259,7 +287,10 @@ async function sendChat(e, opts = {}) {
     return result;
   } catch (err) {
     bubble.classList.remove("thinking");
-    bubble.textContent = reply ? `${reply}\n\n⚠ ${err.message}` : `⚠ ${err.message}`;
+    const [main, details] = String(err.message).split("\n\nDetails: ");
+    bubble.textContent = reply ? `${reply}\n\n${main}` : main;
+    bubble.classList.add("error");
+    if (details) bubble.append(el("details", {}, el("summary", {}, "Technical details"), el("div", {}, details)));
     return { reply: reply || `Sorry, ${err.message}`, error: true };
   } finally { $("#send").disabled = false; if (!opts.spoken) input.focus(); }
 }

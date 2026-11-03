@@ -73,13 +73,13 @@ def test_one_turn_makes_one_ollama_check_and_one_embedding(b, monkeypatch):
     b.llm._ollama_state["at"] = 0
     b.llm._embed_cache.clear()
     net.calls.clear()
-    b.core.think("Kuchh nahin sab badhiya, tum batao", background_extract=False)
+    b.core.think("What did Amit say about moving to Pune?", background_extract=False)
     ollama = [c for c in net.calls if "11434" in c[1]]
     embeds = [c for c in net.calls if c[1].endswith("/embeddings")]
     assert len(ollama) <= 1, ollama            # was 5, each ~2 s on Windows
     assert len(embeds) == 1, embeds            # was 2
     net.calls.clear()
-    b.core.think("aur kya chal raha hai", background_extract=False)
+    b.core.think("Remind me what Amit does for work", background_extract=False)
     assert not [c for c in net.calls if "11434" in c[1]]   # cached
 
 
