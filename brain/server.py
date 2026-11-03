@@ -3,8 +3,8 @@ import logging
 from contextlib import asynccontextmanager
 
 import yaml
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -15,7 +15,7 @@ import time
 
 from fastapi import Response
 
-from . import config, core, db, identity, importer, interview, knowledge, llm, memory, settings, voice, web
+from . import config, core, db, identity, importer, interview, knowledge, llm, master, memory, settings, voice, web
 from .providers import PRESETS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -58,6 +58,28 @@ async def lifespan(_app):
 app = FastAPI(title="AI Brain", version="0.1.0", lifespan=lifespan)
 
 
+SESSION_COOKIE = "brain_session"
+# Reachable without unlocking: the interface itself, the look and name for the lock screen, and unlocking.
+OPEN_PATHS = ("/api/master/public", "/api/master/unlock", "/api/master/lock")
+
+
+@app.middleware("http")
+async def _require_unlock(request, call_next):
+    """When 'Lock the whole app' is on, every API call needs the Master PIN session."""
+    path = request.url.path
+    if path.startswith("/api/") and path not in OPEN_PATHS and master.get()["lock_app"]:
+        if not master.session_ok(request.cookies.get(SESSION_COOKIE)):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Locked. Enter your Master PIN.", "locked": True})
+    return await call_next(request)
+
+
+def _need_master(request) -> None:
+    """Master Control changes need the PIN session once a PIN is set."""
+    if not master.session_ok(request.cookies.get(SESSION_COOKIE)):
+        raise HTTPException(status_code=401, detail="Enter your Master PIN to change Master Control.")
+
+
 @app.exception_handler(Exception)
 async def _unexpected(request, exc):
     """Show the real reason in the app instead of a bare 'Error 500'."""
@@ -76,7 +98,9 @@ def _err(exc: Exception, code: int = 400):
 @app.get("/api/status")
 def status():
     return {
-        "owner": config.OWNER_NAME,
+        "owner": master.owner_name(),
+        "brain_name": master.brain_name(),
+        "resting": master.get()["resting"],
         **llm.status(),
         "index": memory.index_coverage(),
         "knowledge": knowledge.stats(),
@@ -107,7 +131,8 @@ class SettingsIn(BaseModel):
 
 
 @app.put("/api/settings")
-def settings_put(body: SettingsIn):
+def settings_put(body: SettingsIn, request: Request):
+    _need_master(request)   # once a Master PIN is set, API keys and settings need it too
     current = settings.load()
     data = body.model_dump()
     for group in ("providers", "search"):
@@ -171,6 +196,113 @@ def reindex():
     r = memory.reindex()
     r["knowledge_chunks"] = knowledge.reindex()
     return r
+
+
+# ---------- Master Control ----------
+
+@app.get("/api/master/public")
+def master_public(request: Request):
+    out = master.public()
+    out["unlocked"] = master.session_ok(request.cookies.get(SESSION_COOKIE))
+    return out
+
+
+@app.get("/api/master")
+def master_get(request: Request):
+    out = master.public()
+    out["unlocked"] = master.session_ok(request.cookies.get(SESSION_COOKIE))
+    return out
+
+
+class MasterIn(BaseModel):
+    changes: dict
+
+
+@app.put("/api/master")
+def master_put(body: MasterIn, request: Request):
+    _need_master(request)
+    out = master.update(body.changes)
+    db.audit("owner", "master.update", fields=sorted(k for k in body.changes if k in master.DEFAULTS))
+    return out | {"unlocked": True}
+
+
+class PinIn(BaseModel):
+    pin: str = ""
+    new_pin: str = ""
+
+
+@app.post("/api/master/unlock")
+def master_unlock(body: PinIn):
+    try:
+        ok = master.check_pin(body.pin)
+    except PermissionError as exc:
+        _err(exc, 429)
+    if not ok:
+        db.audit("system", "master.unlock_failed")
+        _err(Exception("That PIN is not right."), 401)
+    res = JSONResponse({"ok": True})
+    res.set_cookie(SESSION_COOKIE, master.new_session(), httponly=True, samesite="strict", max_age=master.SESSION_SECONDS)
+    db.audit("owner", "master.unlock")
+    return res
+
+
+@app.post("/api/master/lock")
+def master_lock(request: Request):
+    master.end_session(request.cookies.get(SESSION_COOKIE))
+    res = JSONResponse({"ok": True})
+    res.delete_cookie(SESSION_COOKIE)
+    return res
+
+
+@app.post("/api/master/pin")
+def master_pin(body: PinIn, request: Request):
+    try:
+        master.set_pin(body.new_pin, body.pin)
+    except (PermissionError, ValueError) as exc:
+        _err(exc, 400)
+    db.audit("owner", "master.pin_set")
+    res = JSONResponse({"ok": True, "pin_set": True})
+    res.set_cookie(SESSION_COOKIE, master.new_session(), httponly=True, samesite="strict", max_age=master.SESSION_SECONDS)
+    return res
+
+
+@app.post("/api/master/pin/remove")
+def master_pin_remove(body: PinIn):
+    try:
+        master.remove_pin(body.pin)
+    except PermissionError as exc:
+        _err(exc, 400)
+    db.audit("owner", "master.pin_removed")
+    return {"ok": True, "pin_set": False}
+
+
+class RestIn(BaseModel):
+    resting: bool
+
+
+@app.post("/api/master/rest")
+def master_rest(body: RestIn):
+    master.set_resting(body.resting)
+    db.audit("owner", "brain.rest" if body.resting else "brain.wake")
+    return master.public()
+
+
+@app.get("/api/master/export")
+def master_export(request: Request):
+    """A full backup of what the Brain knows. API keys and the PIN are left out."""
+    _need_master(request)
+    with db.session() as conn:
+        tables = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t}")]
+                  for t in ("memories", "pending_memories", "messages", "interview_answers", "knowledge_sources",
+                            "knowledge_chunks", "learn_topics")}
+    for t in ("memories", "knowledge_chunks"):
+        for r in tables[t]:
+            r.pop("embedding", None)
+    backup = {"exported_at": db.now(), "brain": master.public(), "identity_yaml": identity.raw(), **tables}
+    db.audit("owner", "master.export")
+    name = f"{master.brain_name().lower().replace(' ', '-')}-backup-{db.now()[:10]}.json"
+    return Response(content=json.dumps(backup, ensure_ascii=False, indent=1, default=str), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 # ---------- Voice ----------
@@ -589,14 +721,14 @@ def identity_restore(name: str):
 
 class ImportIn(BaseModel):
     text: str
-    owner_name: str = config.OWNER_NAME
+    owner_name: str = ""
     chat_with: str = ""
 
 
 @app.post("/api/import/whatsapp")
 def import_whatsapp(body: ImportIn):
     try:
-        result = importer.import_whatsapp(body.text, body.owner_name, body.chat_with)
+        result = importer.import_whatsapp(body.text, body.owner_name or master.owner_name(), body.chat_with)
         db.audit("owner", "import.whatsapp", chat_with=body.chat_with, created=result["memories_created"])
         return result
     except ValueError as exc:

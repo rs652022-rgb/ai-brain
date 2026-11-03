@@ -341,6 +341,9 @@ def delete_topic(tid: int) -> None:
 
 def run_due(now: datetime | None = None) -> list[dict]:
     """Run scheduled topics that are due. Called by the app's background timer."""
+    from . import master
+    if master.get()["resting"] or not master.feature("learning"):
+        return []
     now = now or datetime.now(timezone.utc)
     done = []
     for t in topics():

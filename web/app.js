@@ -9,9 +9,51 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.locked) showLock();
   if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
 }
+
+// ---------- Branding from Master Control ----------
+window.BRAND = { brain_name: "Brain", owner_first: "there", greeting: "Hey there. What's on your mind?",
+  subtitle: "", suggestions: [], wake_words: ["hey brain"], sleep_words: [], stop_words: [], features: {}, resting: false };
+
+function applyBrand(b) {
+  window.BRAND = b;
+  window.OWNER_FIRST = b.owner_first;
+  $("#brand-name").textContent = b.brain_name;
+  document.title = b.brain_name;
+  document.documentElement.dataset.theme = b.theme || "blueprint";
+  document.documentElement.style.setProperty("--signal", b.accent || "#ffd84a");
+  const voiceOn = b.features?.voice !== false;
+  ["#band-talk", "#talk-toggle", "#wake-toggle", "#speak-toggle", "#mic"].forEach((id) => { const e = $(id); if (e) e.hidden = !voiceOn; });
+  if ($("#messages .empty")) emptyChat();
+  showSheet(currentTab);
+}
+
+async function loadBrand(first = false) {
+  try {
+    const b = await api("/api/master/public");
+    if (b.lock_app && !b.unlocked) { applyBrand(b); showLock(); return false; }
+    applyBrand(b);
+    if (first) setMode(b.default_mode || "mirror");
+    return true;
+  } catch { return true; }
+}
+
+function showLock() {
+  $("#lock").hidden = false;
+  $("#lock-title").textContent = `${window.BRAND.brain_name} is locked.`;
+  setTimeout(() => $("#lock-pin").focus(), 50);
+}
+$("#lock-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/master/unlock", { method: "POST", body: { pin: $("#lock-pin").value } });
+    $("#lock-pin").value = ""; $("#lock").hidden = true;
+    await loadBrand(true); loadStatus(); loadChat();
+  } catch (err) { note("#lock-note", err.message, true); $("#lock-pin").select(); }
+});
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -35,27 +77,49 @@ function note(id, text, isErr = false) {
 
 const fmtDate = (s) => (s || "").slice(0, 10);
 
-// ---------- Tabs ----------
+// ---------- Tabs: each one is a numbered sheet ----------
 const loaders = {};
-$$("#tabs button").forEach((b) => b.addEventListener("click", () => {
-  $$("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${b.dataset.tab}`));
-  loaders[b.dataset.tab]?.();
-}));
+const SHEETS = {
+  chat: ["Chat", ""],
+  learn: ["Learn", "Teach it a topic, a link or a document. It learns only what you ask."],
+  journal: ["Journal", "A few minutes a day: what happened, who you met, how you felt."],
+  interview: ["Interview", "Questions about your life that teach it who you are."],
+  memories: ["Memories", "Everything it remembers about you. Edit, lock or forget any of it."],
+  identity: ["Identity", "Your values, style and decision rules. This is who it is."],
+  import: ["Import", "Bring in your own messages from WhatsApp."],
+  activity: ["Activity", "Every action, in order. This log can't be edited."],
+  settings: ["Settings", "AI models, web search and voice."],
+  master: ["Master Control", "Name, commands, switches, look and security. Only you change these."],
+};
+let currentTab = "chat";
+function showSheet(tab) {
+  const keys = Object.keys(SHEETS), n = String(keys.indexOf(tab)).padStart(2, "0");
+  const [title, desc] = SHEETS[tab] || [tab, ""];
+  $("#rail-num").textContent = n; $("#rail-name").textContent = title;
+  const head = $("#sheet-head");
+  head.hidden = tab === "chat";
+  head.replaceChildren(...[el("div", {}, el("span", { class: "code" }, `Sheet ${n}`), el("h1", {}, title)), desc ? el("p", {}, desc) : null].filter(Boolean));
+}
+function openTab(tab) {
+  currentTab = tab;
+  $$("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${tab}`));
+  showSheet(tab);
+  loaders[tab]?.();
+}
+$$("#tabs button").forEach((b) => b.addEventListener("click", () => openTab(b.dataset.tab)));
 
 // ---------- Status ----------
 async function loadStatus() {
   try {
     const s = await api("/api/status");
-    $("#brand-name").textContent = `${s.owner.split(" ")[0]}'s Brain`;
-    window.OWNER_FIRST = s.owner.split(" ")[0];
-    const hello = document.querySelector(".empty .hello");
-    if (hello) hello.textContent = `Hey ${window.OWNER_FIRST}. What's on your mind?`;
     const ready = s.chain.filter((p) => p.ready);
     const main = ready[0]
       ? `<span class="ok">${ready[0].label.split(" (")[0]}${ready.length > 1 ? ` + ${ready.length - 1} backup` : ""}</span>`
       : `<span class="off">Add an AI key in Settings</span>`;
-    $("#status").innerHTML = `${main}<span class="count">${s.memory.total} memories</span><span class="count">${s.knowledge.sources} learned</span>`;
+    const rest = s.resting ? `<span class="resting">Resting</span>` : "";
+    $("#status").innerHTML = `${rest}${main}<span class="count">${s.memory.total} memories</span><span class="count">${s.knowledge.sources} learned</span>`;
+    if (s.resting !== window.BRAND.resting) { window.BRAND.resting = s.resting; if (currentTab === "master") renderMasterState(); }
     const b = $("#pending-badge");
     b.hidden = !s.memory.pending; b.textContent = s.memory.pending;
   } catch { $("#status").textContent = "Server not reachable"; }
@@ -79,15 +143,23 @@ function addMsg(role, text, extra) {
 }
 
 function emptyChat() {
-  const first = window.OWNER_FIRST || "there";
+  const b = window.BRAND;
   const ask = (text) => el("button", { type: "button", onclick: () => sendChat(null, { text }) }, text);
+  const g = b.greeting || "";
+  const last = /[.?!]$/.test(g) ? g.slice(-1) : "";
+  const hello = el("h1", { class: "hello" }, last ? g.slice(0, -1) : g);
+  if (last) hello.append(el("span", { class: "dot" }, last));
+  const voiceOn = b.features?.voice !== false;
+  const resting = b.resting ? `${b.brain_name} is resting. Say "${b.wake_words?.[0] || "hey brain"}" to wake it.` : null;
   $("#messages").replaceChildren(el("div", { class: "empty" },
-    el("h1", { class: "hello" }, `Hey ${first}. What's on your mind?`),
-    el("p", {}, "Talk it through out loud or type. I answer from your memories, in your own way of thinking."),
-    el("button", { type: "button", class: "orb", id: "hero-talk", "aria-label": "Start talking" }, svgMic()),
-    el("div", { class: "orb-label" }, "Tap to talk"),
-    el("div", { class: "suggest" },
-      ask("How was my week?"), ask("Help me plan tomorrow"), ask("What did I decide about pricing?"))));
+    el("span", { class: "code" }, resting ? "Resting" : `${b.brain_name} is ready`),
+    hello,
+    el("p", {}, resting || b.subtitle || ""),
+    voiceOn ? el("div", { class: "talk-row" },
+      el("button", { type: "button", class: "orb", id: "hero-talk" }, svgMic(), "Tap to talk"),
+      el("span", { class: "orb-label" }, `or say "${b.wake_words?.[0] || "hey brain"}" with Wake word on`)) : null,
+    (b.suggestions || []).length ? el("div", { class: "suggest" }, ...b.suggestions.map(ask)) : null));
+  $("#messages").scrollTop = 0;
 }
 
 function svgMic() {
@@ -182,6 +254,7 @@ async function sendChat(e, opts = {}) {
     bubble.textContent = result.reply;
     bubble.append(replyExtras(result));
     if (result.action === "mode" && result.new_mode) setMode(result.new_mode);
+    if ("resting" in result) { window.BRAND.resting = result.resting; loadStatus(); }
     setTimeout(loadStatus, 4000); // pick up proposed memories
     return result;
   } catch (err) {
@@ -587,8 +660,114 @@ async function loadLearn() {
 loaders.learn = loadLearn;
 
 // ---------- Start ----------
-loadStatus(); loadChat(); setInterval(loadStatus, 30000);
+loadBrand(true).then((open) => { if (open) { loadStatus(); loadChat(); } });
+setInterval(() => { if ($("#lock").hidden) loadStatus(); }, 30000);
 window.addEventListener("load", () => {  // after voice.js has loaded
   const startTab = location.hash.slice(1);
-  if (startTab) document.querySelector(`#tabs button[data-tab="${startTab}"]`)?.click();
+  if (startTab && SHEETS[startTab]) openTab(startTab); else showSheet("chat");
+});
+
+
+// ---------- Master Control ----------
+const SWATCHES = ["#ffd84a", "#c8ff35", "#ff7a3d", "#ff5c8a", "#5ce1e6", "#ffffff"];
+let M = null;
+
+function renderMasterState() {
+  const b = window.BRAND, resting = !!b.resting;
+  $("#m-state").classList.toggle("resting", resting);
+  $("#m-state-text").textContent = resting ? `${b.brain_name} is resting` : `${b.brain_name} is awake`;
+  $("#m-state-hint").textContent = resting ? `Say "${b.wake_words?.[0]}" to wake` : `Say "${b.sleep_words?.[0] || "go to sleep"}" to rest`;
+  $("#m-rest").textContent = resting ? "Wake up" : "Rest now";
+}
+
+function renderMaster(m) {
+  M = m;
+  $("#m-gate").hidden = !(m.pin_set && !m.unlocked);
+  $("#m-body").hidden = m.pin_set && !m.unlocked;
+  $("#m-brain").value = m.brain_name; $("#m-owner").value = m.owner_name;
+  $("#m-greeting").value = m.greeting_template || ""; $("#m-subtitle").value = m.subtitle;
+  $("#m-suggest").value = (m.suggestions || []).join("\n"); $("#m-mode").value = m.default_mode;
+  $("#m-wake").value = (m.wake_words || []).join(", "); $("#m-sleep").value = (m.sleep_words || []).join(", ");
+  $("#m-stop").value = (m.stop_words || []).join(", ");
+  $("#f-web").checked = m.features.web !== false; $("#f-learning").checked = m.features.learning !== false;
+  $("#f-voice").checked = m.features.voice !== false; $("#f-suggest").checked = m.features.suggest_facts !== false;
+  $("#m-theme").value = m.theme;
+  $("#m-swatches").replaceChildren(...SWATCHES.map((c) => el("button", { type: "button", class: `swatch${c === m.accent ? " on" : ""}`,
+    style: `background:${c}`, "aria-label": `Signal colour ${c}`, onclick: () => { M.accent = c; renderMaster(M);
+      document.documentElement.style.setProperty("--signal", c); } })),
+    Object.assign(el("input", { type: "color", value: m.accent, "aria-label": "Custom signal colour" }), {
+      oninput: (e) => { M.accent = e.target.value; document.documentElement.style.setProperty("--signal", e.target.value); } }));
+  $("#m-pin-status").textContent = m.pin_set
+    ? "A Master PIN is set. It's needed to change Master Control and Settings."
+    : "No Master PIN yet. Anyone using this computer can change these settings.";
+  $("#m-pin-old").hidden = !m.pin_set; $("#m-pin-remove").hidden = !m.pin_set;
+  $("#m-pin-save").textContent = m.pin_set ? "Change PIN" : "Set PIN";
+  $("#m-lockapp").checked = !!m.lock_app; $("#m-lockapp").disabled = !m.pin_set;
+  $("#m-lock-now").hidden = !m.pin_set;
+  renderMasterState();
+}
+
+async function loadMaster() {
+  renderMaster(await api("/api/master/public"));
+}
+loaders.master = loadMaster;
+
+$("#m-theme").addEventListener("change", (e) => { document.documentElement.dataset.theme = e.target.value; });
+
+$("#m-save").addEventListener("click", async () => {
+  const changes = {
+    brain_name: $("#m-brain").value, owner_name: $("#m-owner").value, greeting: $("#m-greeting").value,
+    subtitle: $("#m-subtitle").value, suggestions: $("#m-suggest").value, default_mode: $("#m-mode").value,
+    wake_words: $("#m-wake").value, sleep_words: $("#m-sleep").value, stop_words: $("#m-stop").value,
+    theme: $("#m-theme").value, accent: M.accent, lock_app: $("#m-lockapp").checked,
+    features: { web: $("#f-web").checked, learning: $("#f-learning").checked, voice: $("#f-voice").checked,
+                suggest_facts: $("#f-suggest").checked },
+  };
+  try {
+    const r = await api("/api/master", { method: "PUT", body: { changes } });
+    applyBrand(r); renderMaster(r); loadStatus();
+    if (window.voiceReload) window.voiceReload();
+    note("#m-note", `Saved. ${r.brain_name} is updated.`);
+  } catch (e) { note("#m-note", e.message, true); }
+});
+
+$("#m-rest").addEventListener("click", async () => {
+  const r = await api("/api/master/rest", { method: "POST", body: { resting: !window.BRAND.resting } });
+  applyBrand(r); renderMasterState(); loadStatus();
+});
+
+$("#m-pin-save").addEventListener("click", async () => {
+  try {
+    await api("/api/master/pin", { method: "POST", body: { pin: $("#m-pin-old").value, new_pin: $("#m-pin-new").value } });
+    $("#m-pin-old").value = ""; $("#m-pin-new").value = "";
+    note("#m-pin-note", "PIN saved. Keep it somewhere safe: it can't be recovered, only reset by deleting data/settings.json."); loadMaster();
+  } catch (e) { note("#m-pin-note", e.message, true); }
+});
+$("#m-pin-remove").addEventListener("click", async () => {
+  if (!confirm("Remove the Master PIN? Anyone using this computer could then change Master Control.")) return;
+  try {
+    await api("/api/master/pin/remove", { method: "POST", body: { pin: $("#m-pin-old").value } });
+    $("#m-pin-old").value = ""; note("#m-pin-note", "PIN removed."); loadMaster();
+  } catch (e) { note("#m-pin-note", e.message, true); }
+});
+$("#m-lock-now").addEventListener("click", async () => {
+  await api("/api/master/lock", { method: "POST" });
+  if (window.BRAND.lock_app) showLock(); else { note("#m-pin-note", "Master Control locked."); loadMaster(); }
+});
+async function gateUnlock() {
+  try {
+    await api("/api/master/unlock", { method: "POST", body: { pin: $("#m-gate-pin").value } });
+    $("#m-gate-pin").value = ""; loadMaster();
+  } catch (e) { note("#m-gate-note", e.message, true); }
+}
+$("#m-gate-go").addEventListener("click", gateUnlock);
+$("#m-gate-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") gateUnlock(); });
+
+$("#m-export").addEventListener("click", async () => {
+  const res = await fetch("/api/master/export");
+  if (!res.ok) { note("#m-note", (await res.json().catch(() => ({}))).detail || "Export failed", true); return; }
+  const url = URL.createObjectURL(await res.blob());
+  const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "brain-backup.json";
+  Object.assign(document.createElement("a"), { href: url, download: name }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 });

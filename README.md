@@ -58,6 +58,17 @@ In Settings: **Add provider → paste key → Test → Save settings.** Use **Lo
 5. Check **Memories** for facts waiting for approval.
 6. Chat in **Mirror** mode and correct it when it gets you wrong. Corrections become memories.
 
+## Master Control (you're in charge)
+
+Open the **Master** tab to change anything about your Brain:
+
+- **Identity:** give it any name (for example "Jarvis"), set your own name, the greeting on the chat screen, the line under it, the quick prompts, and which mode it starts in. In the greeting, `{first}` becomes your first name and `{name}` the Brain's name.
+- **Commands:** your own **wake** words ("hey jarvis, utho jarvis"), **rest** words ("go to sleep, so jao") and **stop** words ("stop, ruko"). Say or type them. While resting, it doesn't answer, research or learn, and costs nothing. "Hey jarvis, what's my plan?" wakes it and answers in one go. With **Wake word** on in Chat, it listens for your wake words hands-free; after you tell it to rest during a voice conversation, it goes back to waiting for them.
+- **Switches:** turn web access, learning, voice and fact suggestions on or off.
+- **Look:** Blueprint (light) or Midnight (dark) theme, and any signal colour.
+- **Security:** set a **Master PIN**. Once set, the PIN is needed to change Master Control and Settings (API keys). Turn on **Lock the whole app** to ask for the PIN before showing anything. Only a salted hash of the PIN is stored; after 5 wrong tries it waits a minute. Forgot it? Stop the app and delete the `"master"` section's `pin_hash` from `data/settings.json`.
+- **Data:** download a full backup (memories, journal, chats, learned knowledge, Identity File). API keys and the PIN are left out.
+
 ## How it learns (only from your instructions)
 
 The Brain never decides by itself to learn something. It learns when you tell it to, in the **Learn** tab or in chat:
@@ -81,7 +92,7 @@ What it will not do:
 
 ## Voice
 
-Click **🎤** to say one thing, **🎙 Talk** for a hands-free conversation (it listens, answers aloud, and listens again), or **👂 Wake word** to have it wait for "hey brain" while the page is open. **🔊** turns spoken replies on or off. Press **Esc** or say **"stop"** between turns to stop it; say **"goodbye"** to end a hands-free conversation.
+Click the **mic** to say one thing, **Talk** for a hands-free conversation (it listens, answers aloud, and listens again), or **Wake word** to have it wait for your wake words (set in Master Control) while the page is open. The **speaker** button turns spoken replies on or off. Press **Esc** or say **"stop"** between turns to stop it; say **"goodbye"** to end a hands-free conversation.
 
 Set it up in **Settings → Voice**:
 
@@ -132,6 +143,7 @@ brain/
   providers.py     provider presets (free and paid)
   settings.py      your providers, keys and order (data/settings.json)
   llm.py           universal connector with automatic fallback
+  master.py        Master Control: name, commands, rest mode, switches, PIN and app lock
   memory.py        add, tag, search, edit, forget, approval queue, rules
   web.py           web search, safe page reading, PDF/Word reading
   knowledge.py     what it learned: sources, study notes, scheduled topics

@@ -14,7 +14,10 @@ const V = {
   speaker: null,      // the Speaker reading the current reply
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const STOP_RE = /^(stop|stop talking|be quiet|ruko|ruk|bas|chup)[.!]?$/i;
+const STOP_DEFAULT = ["stop", "stop talking", "be quiet", "ruko", "ruk", "bas", "chup"];
+const norm = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
+const isStop = (t) => [...STOP_DEFAULT, ...(window.BRAND?.stop_words || [])].some((w) => norm(t) === norm(w));
+const wakeWords = () => (window.BRAND?.wake_words?.length ? window.BRAND.wake_words : ["hey brain"]).map(norm);
 
 async function loadVoice() {
   try { const r = await api("/api/voice"); V.cfg = r.config; V.caps = r; } catch { /* keep defaults */ }
@@ -237,7 +240,7 @@ function stopListening() {
 async function handleSpoken(text, { speakReply }) {
   text = text.trim();
   if (!text) return;
-  if (STOP_RE.test(text)) { stopSpeaking(); return; }
+  if (isStop(text)) { stopSpeaking(); return null; }
   showBar("Thinking…");
   const speaker = speakReply && V.cfg.tts !== "off" ? new Speaker() : null;
   if (speaker) V.speaker = speaker;
@@ -247,6 +250,7 @@ async function handleSpoken(text, { speakReply }) {
     speaker.end();
     await speaker.done;
   }
+  return r;
 }
 
 const wantsSpeech = () => $("#speak-toggle").classList.contains("on") && V.cfg.tts !== "off";
@@ -271,7 +275,8 @@ async function talkLoop() {
       if (!text) { if (++empty >= 3) { setTalk(false); addMsg("assistant", "I stopped listening because it was quiet. Click 🎙 Talk to continue."); } continue; }
       empty = 0;
       if (/^(goodbye|bye|that's all|stop listening|band karo)[.!]?$/i.test(text)) { setTalk(false); await speak("Okay, talk to you later."); break; }
-      await handleSpoken(text, { speakReply: true });
+      const r = await handleSpoken(text, { speakReply: true });
+      if (r?.action === "rest" || r?.action === "resting") { setTalk(false); if (!V.wake && window.BRAND?.features?.voice !== false) setWake(true); }
     } catch (e) { addMsg("assistant", `⚠ ${e.message}`); setTalk(false); }
     finally { V.busy = false; }
   }
@@ -281,27 +286,33 @@ async function talkLoop() {
 function setTalk(on) {
   V.talk = on;
   $("#talk-toggle").classList.toggle("on", on);
+  $("#band-talk")?.classList.toggle("on", on);
   if (on) { setWake(false); talkLoop(); } else { stopListening(); stopSpeaking(); showBar(""); }
 }
 
 // Wake word: browser recognition runs continuously and reacts only to the wake phrase.
 async function wakeLoop() {
   if (!SR) { addMsg("assistant", "⚠ The wake word needs Chrome or Edge."); setWake(false); return; }
-  const phrase = (V.cfg.wake_word || "hey brain").toLowerCase();
   while (V.wake) {
-    showBar(`Waiting for "${phrase}"…`);
-    let command = null;
+    const words = wakeWords();
+    showBar(`Waiting for "${words[0]}"…`);
+    let heard = null;
     try {
       await listenBrowser({ continuous: true, onPartial: (t) => {
-        const low = t.toLowerCase(), i = low.indexOf(phrase);
-        if (i >= 0) { command = t.slice(i + phrase.length).replace(/^[\s,.!]+/, ""); return "done"; }
+        const low = norm(t);
+        const w = words.find((x) => low.includes(x));
+        if (w) { heard = t.slice(Math.max(0, t.toLowerCase().indexOf(w.split(" ")[0]))); return "done"; }
       } });
     } catch (e) { addMsg("assistant", `⚠ ${e.message}`); setWake(false); break; }
-    if (!V.wake || command === null) continue;
+    if (!V.wake || heard === null) continue;
     V.busy = true;
     try {
-      if (!command) { await speak("Yes?"); command = await listenOnce(); }
-      await handleSpoken(command, { speakReply: true });
+      // Send the wake phrase itself: the server wakes the Brain if it was resting, and answers anything after it.
+      let r = await handleSpoken(heard, { speakReply: true });
+      if (r?.action === "wake" && !norm(heard).split(" ").slice(words[0].split(" ").length).length) {
+        const more = await listenOnce();
+        if (more) r = await handleSpoken(more, { speakReply: true });
+      }
     } catch (e) { addMsg("assistant", `⚠ ${e.message}`); }
     finally { V.busy = false; }
   }
@@ -318,6 +329,7 @@ function setWake(on) {
 $("#mic").addEventListener("click", micOnce);
 document.addEventListener("click", (e) => { if (e.target.closest("#hero-talk")) setTalk(true); });
 $("#talk-toggle").addEventListener("click", () => setTalk(!V.talk));
+$("#band-talk").addEventListener("click", () => { if (typeof openTab === "function") openTab("chat"); setTalk(!V.talk); });
 $("#wake-toggle").addEventListener("click", () => setWake(!V.wake));
 $("#speak-toggle").addEventListener("click", () => {
   const on = !$("#speak-toggle").classList.contains("on");
@@ -343,7 +355,7 @@ if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = fillBrowserVo
 function renderVoiceSettings() {
   const c = V.cfg;
   $("#v-stt").value = c.stt; $("#v-tts").value = c.tts; $("#v-lang").value = c.language;
-  $("#v-rate").value = c.rate; $("#v-wake").value = c.wake_word; $("#v-wmodel").value = c.whisper_model;
+  $("#v-rate").value = c.rate; $("#v-wmodel").value = c.whisper_model;
   $("#v-pvoice").value = c.piper_voice;
   const ev = V.caps.edge_voices || {};
   $("#v-evoice").replaceChildren(...Object.entries(ev).map(([id, label]) => el("option", { value: id }, label)));
@@ -363,7 +375,7 @@ function renderVoiceSettings() {
 
 function readVoiceSettings() {
   return { ...V.cfg, stt: $("#v-stt").value, tts: $("#v-tts").value, language: $("#v-lang").value,
-    rate: Number($("#v-rate").value), wake_word: $("#v-wake").value.trim() || "hey brain",
+    rate: Number($("#v-rate").value),
     whisper_model: $("#v-wmodel").value, edge_voice: $("#v-evoice").value || "en-IN-PrabhatNeural", piper_voice: $("#v-pvoice").value.trim() || "en_US-lessac-medium",
     browser_voice: $("#v-bvoice").value, speak_replies: V.cfg.speak_replies !== false };
 }
@@ -394,4 +406,5 @@ $("#v-test").addEventListener("click", async () => {
   await speak("Hey Rahul! Acha, this is how I sound now. Kaafi natural hai na?");
 });
 
+window.voiceReload = loadVoice;
 loadVoice();

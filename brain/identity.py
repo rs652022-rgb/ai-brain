@@ -12,7 +12,7 @@ from . import config, db
 TEMPLATE = {
     "core_identity": {
         "name": "Rahul's Brain",
-        "owner": config.OWNER_NAME,
+        "owner": config.OWNER_NAME,   # Master Control's name is used everywhere else
         "relationship": "A mirror of Rahul: thinks and speaks like him, and helps him think clearly.",
         "voice": "first-person as Rahul when in mirror mode; 'you' when coaching",
     },

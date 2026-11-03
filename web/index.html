@@ -3,32 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rahul's Brain</title>
-<meta name="theme-color" content="#000000">
+<title>Brain</title>
+<meta name="theme-color" content="#1e3fe0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zalando+Sans:wght@400;500;600;700&family=Zalando+Sans+Expanded:wght@400;500;600;700&family=Zalando+Sans+SemiExpanded:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand"><strong id="brand-name">Brain</strong></div>
-  <div class="status" id="status">Connecting…</div>
-</header>
+<div class="band">
+  <header class="top">
+    <div class="brand"><svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="13" cy="13" r="8.5"/><path d="M13 1v8M13 17v8M1 13h8M17 13h8"/><circle cx="13" cy="13" r="2.2" fill="#ffd84a" stroke="none"/></svg><strong id="brand-name">Brain</strong></div>
+    <div class="status" id="status" aria-live="polite">Connecting…</div>
+    <button class="band-cta" id="band-talk" type="button" title="Start a hands-free conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><span class="label">Talk</span></button>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button data-tab="chat" class="active">Chat</button>
+    <button data-tab="learn">Learn</button>
+    <button data-tab="journal">Journal</button>
+    <button data-tab="interview">Interview</button>
+    <button data-tab="memories">Memories <span class="badge" id="pending-badge" hidden></span></button>
+    <button data-tab="identity">Identity</button>
+    <button data-tab="import">Import</button>
+    <button data-tab="activity">Activity</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="master">Master</button>
+  </nav>
+</div>
+<div class="rail" aria-hidden="true"><div class="marker"><span class="num" id="rail-num">00</span><span class="name" id="rail-name">Chat</span></div></div>
 
-<nav class="tabs" id="tabs">
-  <button data-tab="chat" class="active">Chat</button>
-  <button data-tab="learn">Learn</button>
-  <button data-tab="journal">Journal</button>
-  <button data-tab="interview">Interview</button>
-  <button data-tab="memories">Memories <span class="badge" id="pending-badge" hidden></span></button>
-  <button data-tab="identity">Identity</button>
-  <button data-tab="import">Import</button>
-  <button data-tab="activity">Activity</button>
-  <button data-tab="settings">Settings</button>
-</nav>
+<div class="lock" id="lock" hidden>
+  <form id="lock-form">
+    <h1 id="lock-title">Locked.</h1>
+    <p>Enter your Master PIN to open your Brain.</p>
+    <input type="password" id="lock-pin" inputmode="numeric" autocomplete="current-password" placeholder="PIN" aria-label="Master PIN">
+    <div class="row"><button class="primary" type="submit">Unlock</button></div>
+    <p class="note" id="lock-note"></p>
+  </form>
+</div>
 
 <main>
+  <div class="sheet-head" id="sheet-head"></div>
   <!-- CHAT -->
   <section id="tab-chat" class="tab active">
     <div class="chat-head">
@@ -246,7 +261,6 @@
         <label>Browser voice
           <select id="v-bvoice"><option value="">Automatic (Indian English if available)</option></select></label>
         <label>Speaking speed <input type="range" id="v-rate" min="0.7" max="1.5" step="0.05"></label>
-        <label>Wake word <input id="v-wake" placeholder="hey brain"></label>
         <label>Local Whisper size
           <select id="v-wmodel"><option value="tiny">Tiny: fastest</option><option value="base">Base: good balance</option>
             <option value="small">Small: more accurate</option><option value="medium">Medium: best, needs a strong laptop</option></select></label>
@@ -306,6 +320,95 @@
       <h2>Activity log</h2>
       <p class="hint">Everything the Brain and you have done. This log is append-only: it cannot be edited or deleted.</p>
       <div id="audit-list" class="list mono small"></div>
+    </div>
+  </section>
+
+  <!-- MASTER CONTROL -->
+  <section id="tab-master" class="tab">
+    <div class="card" id="m-gate" hidden>
+      <h2>Unlock Master Control</h2>
+      <p class="hint">Master Control is protected by your PIN.</p>
+      <div class="row"><input type="password" id="m-gate-pin" placeholder="Master PIN" aria-label="Master PIN" style="max-width:260px"><button class="primary" id="m-gate-go">Unlock</button></div>
+      <p class="note" id="m-gate-note"></p>
+    </div>
+
+    <div id="m-body">
+      <div class="state" id="m-state">
+        <span class="lamp"></span><strong id="m-state-text">Awake and listening</strong>
+        <span id="m-state-hint" class="mono"></span>
+        <button id="m-rest">Rest now</button>
+      </div>
+
+      <div class="card" style="margin-top:22px">
+        <h2>Identity</h2>
+        <p class="hint">Give your Brain any name. It uses this name for itself, and it shows everywhere in the app.</p>
+        <div class="mgrid">
+          <label class="field">Brain's name<input id="m-brain" maxlength="40" placeholder="Brain"></label>
+          <label class="field">Your name<input id="m-owner" maxlength="60" placeholder="Your full name"></label>
+          <label class="field wide">Greeting on the chat screen<input id="m-greeting" maxlength="120" placeholder="Hey {first}. What's on your mind?"></label>
+          <label class="field wide">Line under the greeting<input id="m-subtitle" maxlength="240"></label>
+          <label class="field wide">Quick prompts (one per line)<textarea id="m-suggest" rows="3"></textarea></label>
+          <label class="field">Start in this mode
+            <select id="m-mode"><option value="mirror">Mirror</option><option value="assistant">Assistant</option><option value="coach">Coach</option></select></label>
+        </div>
+        <p class="hint" style="margin-top:12px">In the greeting, <code>{first}</code> becomes your first name and <code>{name}</code> becomes the Brain's name.</p>
+      </div>
+
+      <div class="card">
+        <h2>Commands</h2>
+        <p class="hint">Say or type these. Separate several with commas. Wake words also work hands-free when "Wake word" listening is on in Chat.</p>
+        <div class="mgrid">
+          <label class="field wide">Wake up<input id="m-wake" placeholder="hey brain, utho"></label>
+          <label class="field wide">Rest<input id="m-sleep" placeholder="go to sleep, rest now"></label>
+          <label class="field wide">Stop talking<input id="m-stop" placeholder="stop, ruko, bas"></label>
+        </div>
+        <p class="hint" style="margin-top:12px">While resting, your Brain doesn't answer, research or learn, and costs nothing. Say a wake word to bring it back. A wake word followed by a question, like "hey brain, what's my plan?", wakes it and answers in one go.</p>
+      </div>
+
+      <div class="card">
+        <h2>Switches</h2>
+        <div class="switches">
+          <label class="switch"><span>Web access<small>Search and read the web when you ask</small></span><input type="checkbox" id="f-web"></label>
+          <label class="switch"><span>Learning<small>Scheduled research and learning topics</small></span><input type="checkbox" id="f-learning"></label>
+          <label class="switch"><span>Voice<small>Mic, talk mode and spoken replies</small></span><input type="checkbox" id="f-voice"></label>
+          <label class="switch"><span>Fact suggestions<small>Suggest facts from your messages for approval</small></span><input type="checkbox" id="f-suggest"></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Look</h2>
+        <div class="mgrid">
+          <label class="field">Theme
+            <select id="m-theme"><option value="blueprint">Blueprint (light)</option><option value="midnight">Midnight (dark)</option></select></label>
+          <div class="field" style="display:flex;flex-direction:column;gap:6px;font:500 11px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Signal colour
+            <div class="swatches" id="m-swatches"></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Security</h2>
+        <p class="hint" id="m-pin-status">No Master PIN yet. Anyone using this computer can change these settings.</p>
+        <div class="row">
+          <input type="password" id="m-pin-old" placeholder="Current PIN" autocomplete="current-password" hidden>
+          <input type="password" id="m-pin-new" placeholder="New PIN (4+ characters)" autocomplete="new-password">
+          <button class="primary" id="m-pin-save">Set PIN</button>
+          <button class="ghost danger" id="m-pin-remove" hidden>Remove PIN</button>
+        </div>
+        <div class="switches" style="margin-top:16px">
+          <label class="switch"><span>Lock the whole app<small>Ask for the PIN before showing anything. Needs a PIN.</small></span><input type="checkbox" id="m-lockapp"></label>
+        </div>
+        <div class="row"><button id="m-lock-now">Lock now</button></div>
+        <p class="note" id="m-pin-note"></p>
+      </div>
+
+      <div class="card">
+        <h2>Data</h2>
+        <p class="hint">Download a backup of everything your Brain knows: memories, journal, chats, learned knowledge and Identity File. API keys and your PIN are left out.</p>
+        <div class="row"><button id="m-export">Download backup</button></div>
+      </div>
+
+      <div class="row"><button class="primary" id="m-save">Save Master Control</button></div>
+      <p class="note" id="m-note"></p>
     </div>
   </section>
 </main>

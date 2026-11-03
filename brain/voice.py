@@ -46,7 +46,12 @@ def cfg() -> dict:
     saved = settings.load().get("voice") or {}
     if saved.get("tts") == "browser" and "edge_voice" not in saved:
         saved = saved | {"tts": "edge"}   # saved before the natural voice existed: upgrade to it
-    return DEFAULTS | saved
+    out = DEFAULTS | saved
+    from . import master
+    words = master.get()["wake_words"]
+    if words:
+        out["wake_word"] = words[0]           # the wake word is set in Master Control
+    return out
 
 
 def voices_dir():
