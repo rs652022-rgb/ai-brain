@@ -144,9 +144,13 @@ def strip_command(text: str, words: list[str]) -> str:
 
 # ---------- PIN and sessions ----------
 
-_sessions: dict[str, float] = {}          # token -> expiry
+_sessions: dict[str, tuple[str, float]] = {}   # token -> (whose Brain, expiry)
 SESSION_SECONDS = 12 * 3600
-_failures = {"count": 0, "until": 0.0}
+_failures_by: dict[str, dict] = {}
+
+
+def _failures() -> dict:
+    return _failures_by.setdefault(config.user_key(), {"count": 0, "until": 0.0})
 
 
 def _hash(pin: str, salt: str) -> str:
@@ -178,7 +182,9 @@ def remove_pin(old_pin: str) -> None:
         data = settings.load()
         data["master"] = get() | {"pin_salt": "", "pin_hash": "", "lock_app": False}
         settings.save(data)
-    _sessions.clear()
+    me = config.user_key()
+    for tok in [k for k, (who, _) in _sessions.items() if who == me]:
+        _sessions.pop(tok, None)
 
 
 def check_pin(pin: str) -> bool:
@@ -186,31 +192,33 @@ def check_pin(pin: str) -> bool:
     if not m["pin_hash"]:
         return True
     now = time.time()
-    if _failures["until"] > now:
-        raise PermissionError(f"Too many wrong tries. Wait {int(_failures['until'] - now) + 1} seconds.")
+    f = _failures()
+    if f["until"] > now:
+        raise PermissionError(f"Too many wrong tries. Wait {int(f['until'] - now) + 1} seconds.")
     ok = hmac.compare_digest(_hash(pin or "", m["pin_salt"]), m["pin_hash"])
     if ok:
-        _failures.update(count=0, until=0.0)
+        f.update(count=0, until=0.0)
     else:
-        _failures["count"] += 1
-        if _failures["count"] >= 5:
-            _failures.update(count=0, until=now + 60)
+        f["count"] += 1
+        if f["count"] >= 5:
+            f.update(count=0, until=now + 60)
         time.sleep(0.6)  # slow down guessing
     return ok
 
 
 def new_session() -> str:
     token = secrets.token_urlsafe(32)
-    _sessions[token] = time.time() + SESSION_SECONDS
+    _sessions[token] = (config.user_key(), time.time() + SESSION_SECONDS)
     return token
 
 
 def session_ok(token: str | None) -> bool:
     if not get()["pin_hash"]:
         return True
-    exp = _sessions.get(token or "")
-    if not exp or exp < time.time():
-        _sessions.pop(token or "", None)
+    who, exp = _sessions.get(token or "", ("", 0))
+    if not exp or exp < time.time() or who != config.user_key():
+        if exp and exp < time.time():
+            _sessions.pop(token or "", None)
         return False
     return True
 

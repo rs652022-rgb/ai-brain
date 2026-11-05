@@ -134,7 +134,21 @@ function renderControl() {
 
   $("#c-install-adb").hidden = st.adb_installed;
   let ph;
-  if (!st.adb_installed) ph = "ADB isn't installed yet. Click Install ADB.";
+  if (st.remote) {                     // web version: the companion app is the Brain's hands
+    $("#c-remote").hidden = false;
+    $("#c-pc-title").textContent = "Your computer";
+    $("#c-install-pc").hidden = true;
+    $("#c-pc-status").textContent = st.connected
+      ? `Connected: ${st.device_name} (${st.system === "Darwin" ? "Mac" : st.system})${st.pc_installed ? "." : ". Its screen-control packages are missing: restart the companion."}`
+      : "No computer connected. Install and start the Brain Companion (see Your computers).";
+    $("#c-install-adb").hidden = !st.connected || st.adb_installed;
+    $("#c-install-adb").textContent = "Install ADB on my computer";
+    $("#c-look-pc").disabled = !st.connected;
+    $("#c-look-phone").disabled = !st.connected;
+    loadCompanions();
+  }
+  if (st.remote && !st.connected) ph = "Connect your computer first; the phone plugs into it (or joins over Wi-Fi).";
+  else if (!st.adb_installed) ph = "ADB isn't installed yet. Click Install ADB.";
   else if (st.phone_error) ph = st.phone_error;
   else if (!st.phones.length) ph = "No phone found yet. Plug it in (USB debugging on) or connect over Wi-Fi, then Refresh.";
   else ph = st.phones.map((p) => `${p.model || p.serial}: ${p.state === "device" ? "connected" : p.state === "unauthorized" ? "tap Allow on the phone" : p.state}`).join(" · ");
@@ -257,3 +271,35 @@ async function controlGateUnlock() {
 }
 $("#c-gate-go").addEventListener("click", controlGateUnlock);
 $("#c-gate-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") controlGateUnlock(); });
+
+// ---------- Web version: linked computers (Brain Companion) ----------
+async function loadCompanions() {
+  let list = [], dl = { files: [], script_zip: "" };
+  try { [list, dl] = await Promise.all([api("/api/companion/devices"), api("/api/downloads")]); } catch { return; }
+  const links = [...dl.files.map((f) => el("a", { href: f.url, download: "" }, f.name.replace("BrainCompanion-", "").replace(/\.(exe|zip)$/, "") + ` (${Math.round(f.size / 1e6)} MB)`)),
+                 el("a", { href: dl.script_zip, download: "" }, dl.files.length ? "Python version (any system)" : "Brain Companion (Windows, Mac, Linux; needs Python)")];
+  $("#c-dl").replaceChildren(...links.flatMap((a, i) => (i ? [" · ", a] : [a])));
+  $("#c-companions").replaceChildren(...(list.length ? list.map((d) => el("div", { class: "item" },
+    el("div", { class: "body" }, d.name),
+    el("div", { class: "meta" }, el("span", { class: `task-state ${d.online ? "done" : "stopped"}` }, d.online ? "Online" : "Offline"),
+      `linked ${fmtDate(d.created)}`, d.last_seen ? `last seen ${fmtDate(d.last_seen)}` : "",
+      el("span", { class: "actions" }, el("button", { class: "mini danger", onclick: async () => {
+        if (!confirm(`Unlink ${d.name}? It won't be able to connect until you pair it again.`)) return;
+        await api(`/api/companion/devices/${d.id}`, { method: "DELETE" }); loadControl();
+      } }, "Unlink")))))
+    : [el("p", { class: "hint" }, "No computers linked yet.")]));
+}
+
+$("#c-pair-code-btn").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    const r = await api("/api/companion/code", { method: "POST" });
+    const box = $("#c-pair-out");
+    box.hidden = false;
+    box.replaceChildren(
+      el("div", {}, el("span", { class: "code" }, "Web address"), el("strong", { class: "mono" }, r.server)),
+      el("div", {}, el("span", { class: "code" }, "Pairing code"), el("strong", { class: "mono big" }, r.code.replace(/(.{4})/, "$1-"))),
+      el("p", { class: "hint" }, "Type both into the companion within 10 minutes. The code works once."));
+  } catch (err) { note("#c-remote-note", err.message, true); }
+  e.target.disabled = false;
+});

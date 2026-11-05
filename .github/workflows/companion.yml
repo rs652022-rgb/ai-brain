@@ -1,0 +1,58 @@
+# Builds the Brain Companion app for Windows, macOS and Linux (free on GitHub Actions).
+# Run it from the Actions tab ("Run workflow"), or push a tag like companion-v1.0 to publish a release.
+# Then put the files in your server's brain-data/downloads/ folder so users can download them from Control.
+name: Build Brain Companion
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["companion-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            out: BrainCompanion-Windows.exe
+          - os: macos-latest
+            out: BrainCompanion-macOS.zip
+          - os: ubuntu-latest
+            out: BrainCompanion-Linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r companion/requirements.txt pyinstaller
+      - name: Build
+        shell: bash
+        run: |
+          pyinstaller --onefile --name BrainCompanion --paths . \
+            --hidden-import brain.devices --hidden-import brain.control --hidden-import brain.settings \
+            --hidden-import brain.providers --hidden-import brain.voice --hidden-import brain.web \
+            --collect-submodules websockets companion/brain_companion.py
+      - name: Name the file
+        shell: bash
+        run: |
+          mkdir out
+          case "${{ matrix.os }}" in
+            windows-latest) cp dist/BrainCompanion.exe "out/${{ matrix.out }}" ;;
+            macos-latest)   (cd dist && zip -r "../out/${{ matrix.out }}" BrainCompanion) ;;
+            *)              cp dist/BrainCompanion "out/${{ matrix.out }}" ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: out/${{ matrix.out }}
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: out/${{ matrix.out }}

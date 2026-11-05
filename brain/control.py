@@ -11,7 +11,7 @@ Stored in data/settings.json under "control".
 import threading
 from pathlib import Path
 
-from . import settings
+from . import config, settings
 
 CATEGORIES = {
     #  key           label                              what it covers                                        default
@@ -29,6 +29,8 @@ ALWAYS_ASK = {"messages", "power"}          # these can never be set to "auto"
 
 
 def _home_folders() -> list[str]:
+    if config.MULTIUSER:          # paths on the user's own computer; the companion expands "~"
+        return ["~/Desktop", "~/Documents", "~/Downloads"]
     home = Path.home()
     return [str(home / d) for d in ("Desktop", "Documents", "Downloads")]
 
@@ -76,7 +78,8 @@ def update(changes: dict) -> dict:
             items = changes["folders"]
             if isinstance(items, str):
                 items = items.splitlines()
-            c["folders"] = [str(Path(str(f).strip()).expanduser()) for f in items if str(f).strip()][:20]
+            c["folders"] = [(str(f).strip() if config.MULTIUSER else str(Path(str(f).strip()).expanduser()))
+                            for f in items if str(f).strip()][:20]
         if "max_steps" in changes:
             try:
                 c["max_steps"] = max(3, min(80, int(changes["max_steps"])))
@@ -103,6 +106,14 @@ def level(category: str) -> str:
     return "ask" if (category in ALWAYS_ASK and lv == "auto") else lv
 
 
+# The companion app gets the allowed folders from the owner's Brain with each request.
+FOLDERS_OVERRIDE: list[str] | None = None
+
+
+def folders() -> list[str]:
+    return FOLDERS_OVERRIDE if FOLDERS_OVERRIDE is not None else get()["folders"]
+
+
 def folder_allowed(path: str | Path) -> Path:
     """The resolved path if it is inside one of the allowed folders; raises PermissionError otherwise."""
     p = Path(str(path)).expanduser()
@@ -110,7 +121,7 @@ def folder_allowed(path: str | Path) -> Path:
         p = p.resolve()
     except OSError as exc:
         raise PermissionError(f"Can't use that path: {exc}") from exc
-    for f in get()["folders"]:
+    for f in folders():
         try:
             root = Path(f).expanduser().resolve()
         except OSError:

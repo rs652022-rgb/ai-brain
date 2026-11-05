@@ -1,0 +1,38 @@
+# AI Brain web version. Everything here is free and open source.
+#
+#   docker compose up -d                       Brain only, on http://127.0.0.1:8765 of this machine
+#   docker compose --profile https up -d       + Caddy: free automatic HTTPS for your domain (BRAIN_DOMAIN)
+#   docker compose --profile tunnel up -d      + Cloudflare Tunnel: HTTPS from anywhere, no open ports
+#
+# Settings go in a file called .env.server next to this file (see DEPLOY.md).
+services:
+  brain:
+    build: .
+    restart: unless-stopped
+    env_file: { path: .env.server, required: false }
+    volumes:
+      - ./brain-data:/data          # every user's Brain lives here: back this folder up
+    ports:
+      - "127.0.0.1:8765:8765"       # only this machine; Caddy or the tunnel make it public over HTTPS
+
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on: [brain]
+    env_file: { path: .env.server, required: false }
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on: [brain]
+    env_file: { path: .env.server, required: false }
+    command: tunnel --no-autoupdate run          # reads TUNNEL_TOKEN from .env.server
+
+volumes:
+  caddy-data:

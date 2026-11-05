@@ -364,7 +364,7 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
         if action == "journal":
             mem = memory.add(args["text"], type="episodic", source="journal", tags=["journal"])
             if background_extract:
-                threading.Thread(target=extract_memories, args=(args["text"], "journal"), daemon=True).start()
+                config.spawn(extract_memories, args["text"], "journal")
             return {"done": _reply(message, "Added to your journal.", mode, conversation, action="journal",
                                    memory_id=mem["id"])}
         if action == "remember":
@@ -448,7 +448,7 @@ def _finish(ctx: dict, reply: str, model: str) -> dict:
     db.audit("brain", "chat.reply", mode=mode, model=model, memories_recalled=[m["id"] for m in mems],
              knowledge=[k["source_id"] for k in know], web=bool(web_docs))
     if ctx["background_extract"]:
-        threading.Thread(target=extract_memories, args=(message,), daemon=True).start()
+        config.spawn(extract_memories, message)
     else:
         extract_memories(message)
     return {"reply": reply, "memories_used": mems, "knowledge_used": know, "cited": used, "model": model,

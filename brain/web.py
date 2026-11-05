@@ -213,6 +213,9 @@ def _tavily(query: str, n: int, cfg: dict) -> list[dict]:
 
 def _searxng(query: str, n: int, cfg: dict) -> list[dict]:
     base = (cfg.get("base_url") or "").rstrip("/")
+    from . import settings
+    if base and not settings.url_allowed(base):
+        raise WebError("This SearXNG address isn't allowed on a shared server (it must be a public address).")
     if not base:
         raise WebError("SearXNG URL not set")
     r = httpx.get(f"{base}/search", params={"q": query, "format": "json"}, timeout=20)

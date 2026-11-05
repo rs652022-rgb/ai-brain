@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brain</title>
 <meta name="theme-color" content="#1e3fe0">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Brain">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -15,6 +22,7 @@
   <header class="top">
     <div class="brand"><svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="13" cy="13" r="8.5"/><path d="M13 1v8M13 17v8M1 13h8M17 13h8"/><circle cx="13" cy="13" r="2.2" fill="#ffd84a" stroke="none"/></svg><strong id="brand-name">Brain</strong></div>
     <div class="status" id="status" aria-live="polite">Connecting…</div>
+    <button class="acct" id="acct" type="button" hidden title="Your account"></button>
     <button class="band-cta" id="band-talk" type="button" title="Start a hands-free conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><span class="label">Talk</span></button>
   </header>
   <nav class="tabs" id="tabs" aria-label="Sections">
@@ -41,6 +49,47 @@
     <div class="row"><button class="primary" type="submit">Unlock</button></div>
     <p class="note" id="lock-note"></p>
   </form>
+</div>
+
+<div class="lock auth" id="auth" hidden>
+  <div class="auth-box">
+    <div class="auth-brand"><svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="13" cy="13" r="8.5"/><path d="M13 1v8M13 17v8M1 13h8M17 13h8"/><circle cx="13" cy="13" r="2.2" fill="#ffd84a" stroke="none"/></svg><span>Brain</span></div>
+
+    <form id="auth-login" class="auth-form">
+      <h1>Welcome back<span class="dot">.</span></h1>
+      <p>Log in to your Brain.</p>
+      <label class="field">Email<input type="email" id="li-email" autocomplete="email" required></label>
+      <label class="field">Password<input type="password" id="li-pass" autocomplete="current-password" required></label>
+      <div class="row"><button class="primary" type="submit">Log in</button></div>
+      <p class="auth-links"><a href="#" data-auth="signup">Create an account</a><a href="#" data-auth="forgot">Forgot password?</a></p>
+    </form>
+
+    <form id="auth-signup" class="auth-form" hidden>
+      <h1 id="su-title">Make your Brain<span class="dot">.</span></h1>
+      <p id="su-sub">A private AI that learns who you are. Free.</p>
+      <label class="field">Your name<input id="su-name" autocomplete="name" maxlength="60" required></label>
+      <label class="field">Email<input type="email" id="su-email" autocomplete="email" required></label>
+      <label class="field">Password (8+ characters)<input type="password" id="su-pass" autocomplete="new-password" minlength="8" required></label>
+      <div class="row"><button class="primary" type="submit">Create account</button></div>
+      <p class="auth-links"><a href="#" data-auth="login">I already have an account</a></p>
+    </form>
+
+    <form id="auth-forgot" class="auth-form" hidden>
+      <h1>Forgot it<span class="dot">?</span></h1>
+      <p id="fg-sub">Enter your email and we'll send a link to choose a new password.</p>
+      <label class="field">Email<input type="email" id="fg-email" autocomplete="email" required></label>
+      <div class="row"><button class="primary" type="submit">Send reset link</button></div>
+      <p class="auth-links"><a href="#" data-auth="login">Back to log in</a></p>
+    </form>
+
+    <form id="auth-reset" class="auth-form" hidden>
+      <h1>New password<span class="dot">.</span></h1>
+      <p>Choose a new password for your Brain.</p>
+      <label class="field">New password (8+ characters)<input type="password" id="rs-pass" autocomplete="new-password" minlength="8" required></label>
+      <div class="row"><button class="primary" type="submit">Save password</button></div>
+    </form>
+    <p class="note" id="auth-note" role="alert"></p>
+  </div>
 </div>
 
 <main>
@@ -352,8 +401,22 @@
       <div id="c-task"></div>
     </div>
 
+    <div class="card" id="c-remote" hidden>
+      <h2>Your computers</h2>
+      <p class="hint">Your Brain runs on the web, so it uses your computer through the small <strong>Brain Companion</strong> app. Install it on each computer you want it to use, and keep it open. An Android phone plugged into that computer works too.</p>
+      <ol class="steps">
+        <li>Download the companion: <span id="c-dl"></span></li>
+        <li>Click <strong>Make a pairing code</strong>, start the companion and type in this site's address and the code.</li>
+        <li>Switch on <strong>Allow control of my computer</strong> below and press <strong>See my screen</strong> to test.</li>
+      </ol>
+      <div class="row"><button class="primary" id="c-pair-code-btn">Make a pairing code</button></div>
+      <div id="c-pair-out" class="pair-out" hidden></div>
+      <div id="c-companions" class="list" style="margin-top:12px"></div>
+      <p class="note" id="c-remote-note"></p>
+    </div>
+
     <div class="card">
-      <h2>This computer</h2>
+      <h2 id="c-pc-title">This computer</h2>
       <p class="hint" id="c-pc-status">Checking…</p>
       <div class="switches"><label class="switch"><span>Allow control of this computer<small>Mouse, keyboard, screen, apps, files and commands, within the limits below. Stays allowed until you switch it off.</small></span><input type="checkbox" id="c-allow-pc"></label></div>
       <div class="row"><button id="c-install-pc" hidden>Install PC control</button><button id="c-look-pc">See my screen (test)</button></div>
@@ -428,6 +491,41 @@
       <p class="note" id="m-gate-note"></p>
     </div>
 
+    <div class="card" id="a-account" hidden>
+      <h2>Your account</h2>
+      <p class="hint" id="a-who"></p>
+      <div class="mgrid">
+        <label class="field">Current password<input type="password" id="a-old" autocomplete="current-password"></label>
+        <label class="field">New password (8+ characters)<input type="password" id="a-new" autocomplete="new-password"></label>
+      </div>
+      <div class="row">
+        <button id="a-pass">Change password</button>
+        <button id="a-logout">Log out</button>
+        <button id="a-logout-all">Log out everywhere</button>
+        <button class="ghost danger" id="a-delete">Delete my account</button>
+      </div>
+      <p class="note" id="a-note"></p>
+    </div>
+
+    <div class="card" id="a-admin" hidden>
+      <h2>Admin: users</h2>
+      <p class="hint">You're the admin of this Brain server. Each person has their own private Brain; you can't see their memories, only their accounts.</p>
+      <div class="switches"><label class="switch"><span>Allow new sign-ups<small>Switch off to stop strangers creating accounts. You can still reset or switch off existing ones.</small></span><input type="checkbox" id="a-signup"></label></div>
+      <div id="a-users" class="list" style="margin-top:10px"></div>
+      <p class="note" id="a-admin-note"></p>
+    </div>
+
+    <div class="card" id="a-install">
+      <h2>Install the app</h2>
+      <p class="hint" id="a-install-hint">Use your Brain like a normal app on your phone, tablet or computer, with its own icon and window.</p>
+      <div class="row"><button class="primary" id="a-install-btn" hidden>Install the app</button></div>
+      <ul class="steps" id="a-install-steps">
+        <li><strong>Android (Chrome):</strong> menu ⋮ → <strong>Install app</strong> (or Add to Home screen).</li>
+        <li><strong>iPhone / iPad (Safari):</strong> Share button → <strong>Add to Home Screen</strong>.</li>
+        <li><strong>Windows / Mac (Chrome or Edge):</strong> the install icon at the right of the address bar, or menu → <strong>Install Brain</strong>.</li>
+      </ul>
+    </div>
+
     <div id="m-body">
       <div class="state" id="m-state">
         <span class="lamp"></span><strong id="m-state-text">Awake and listening</strong>
@@ -490,10 +588,10 @@
           <button class="primary" id="m-pin-save">Set PIN</button>
           <button class="ghost danger" id="m-pin-remove" hidden>Remove PIN</button>
         </div>
-        <div class="switches" style="margin-top:16px">
+        <div class="switches" id="m-lock-row" style="margin-top:16px">
           <label class="switch"><span>Lock the whole app<small>Ask for the PIN before showing anything. Needs a PIN.</small></span><input type="checkbox" id="m-lockapp"></label>
         </div>
-        <div class="row"><button id="m-lock-now">Lock now</button></div>
+        <div class="row" id="m-lock-now-row"><button id="m-lock-now">Lock now</button></div>
         <p class="note" id="m-pin-note"></p>
       </div>
 
@@ -511,6 +609,7 @@
 
 <script src="/static/app.js"></script>
 <script src="/static/control.js"></script>
+<script src="/static/account.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>

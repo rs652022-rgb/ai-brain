@@ -6,6 +6,7 @@
   allow it in Settings.
 - embed(): search by meaning. Uses Ollama, or Gemini/OpenAI embeddings if chosen.
 """
+import contextvars
 import json
 import logging
 import re
@@ -15,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import settings
+from . import config, settings
 from .providers import PRESETS
 
 log = logging.getLogger("brain.llm")
@@ -65,7 +66,7 @@ COOLDOWN = {429: 300, 503: 120, 500: 60, 502: 60, 504: 60, 0: 60, 404: 3600, 403
 
 
 def _cool_key(pid: str, model: str) -> str:
-    return f"{pid}:{model}"
+    return config.user_key() + '|' + f"{pid}:{model}"   # limits belong to each user's own key
 
 
 def cooling(pid: str, model: str) -> bool:
@@ -251,7 +252,8 @@ def _with_images(kind: str, messages: list[dict]) -> list[dict]:
 def _chain(only: list[str] | None = None) -> list[dict]:
     data = settings.load()
     order = only or data.get("order") or ["ollama"]
-    return [settings.resolved(pid, data) for pid in order if pid in PRESETS]
+    chain = [settings.resolved(pid, data) for pid in order if pid in PRESETS]
+    return [p for p in chain if settings.url_allowed(p["base_url"])]
 
 
 def models_for(p: dict) -> list[str]:
@@ -472,6 +474,8 @@ _ollama_state = {"at": 0.0, "ok": False, "url": ""}
 def ollama_available(fresh: bool = False) -> bool:
     """Is Ollama running? Cached for 30 seconds: this used to be checked 5 times per message."""
     p = settings.resolved("ollama")
+    if not config.allow_private():
+        return False
     now = time.time()
     if not fresh and _ollama_state["url"] == p["base_url"] and now - _ollama_state["at"] < 30:
         return _ollama_state["ok"]
@@ -556,6 +560,8 @@ def _embed_uncached(text: str) -> list[float] | None:
     if pid == "none":
         return None
     p = settings.resolved(pid)
+    if not settings.url_allowed(p["base_url"]):
+        return None
     try:
         if p["kind"] == "ollama":
             data = _post(pid, f"{p['base_url']}/api/embed", {}, {"model": p["embed_model"] or "nomic-embed-text",
@@ -653,7 +659,8 @@ def discover(pid: str, max_tests: int = 8, keep: int = 4) -> dict:
                 "listed": len(all_models)}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(lambda m: _try_model(p, m), candidates))
+        ctx = contextvars.copy_context()          # pool threads work for the same user
+        results = list(pool.map(lambda m: ctx.copy().run(_try_model, p, m), candidates))
     working = [(m, secs) for m, ok, _err, secs in results if ok]
     failed = {m: err for m, ok, err, _secs in results if not ok}
     if not working:

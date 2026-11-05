@@ -17,6 +17,11 @@ Your personal AI Brain, running privately on your laptop. Phase 1 gives it a mem
 
 It never spends money, types passwords or card details, or solves CAPTCHAs.
 
+## Two ways to run it
+
+- **On your laptop** (below): private, just for you, nothing to host.
+- **As a web app for everyone**: people sign up and log in from any phone, tablet or computer, and each gets their own private Brain. It installs like a normal app (Android, iPhone, iPad, Windows, Mac) and needs no app store. The **Brain Companion** app lets each person's Brain use their own computer and phone. Free hosting guide: **[DEPLOY.md](DEPLOY.md)** (Oracle Cloud Always Free, or your own PC with a free Cloudflare Tunnel).
+
 ## Setup (about 10 minutes, free)
 
 ### 1. Install Python
@@ -204,6 +209,8 @@ brain/
   control.py       Device control permissions: on/off, allowed devices, levels, folders
   devices.py       drivers for this computer (pyautogui) and Android phones (ADB), safety guards
   agent.py         the device task loop: look, decide one step, check permission, act, repeat
+  accounts.py      web version: sign-up, login, sessions, admin, companion pairing
+  hub.py           web version: live link to each user's Brain Companion app
   memory.py        add, tag, search, edit, forget, approval queue, rules
   web.py           web search, safe page reading, PDF/Word reading
   knowledge.py     what it learned: sources, study notes, scheduled topics
@@ -212,7 +219,9 @@ brain/
   interview.py     life interview questions
   importer.py      WhatsApp import
   server.py        local web API
-web/               the web app (chat, journal, interview, memories, identity, import, activity)
+web/               the web app (chat, journal, interview, memories, identity, import, activity), installable (PWA)
+companion/         Brain Companion: lets a web-hosted Brain use your computer and phone
+deploy/, Dockerfile, docker-compose.yml   free hosting (see DEPLOY.md)
 tests/             tests with fake models: python -m pytest tests
 ```
 

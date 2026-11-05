@@ -11,7 +11,6 @@ from . import config
 from .providers import PRESETS
 
 _lock = threading.Lock()
-PATH = config.DATA_DIR / "settings.json"
 
 ENV_KEYS = {pid: f"{pid.upper()}_API_KEY" for pid in PRESETS}
 
@@ -24,7 +23,9 @@ def _default() -> dict:
             providers[pid] = {"api_key": key}
     if os.environ.get("CLAUDE_MODEL") and "anthropic" in providers:
         providers["anthropic"]["model"] = os.environ["CLAUDE_MODEL"]
-    order = [p for p in ("anthropic", "gemini", "groq", "openrouter") if p in providers] + ["ollama"]
+    order = [p for p in ("anthropic", "gemini", "groq", "openrouter") if p in providers]
+    if config.allow_private():      # a local Ollama only makes sense on your own computer (or for the admin)
+        order.append("ollama")
     providers.setdefault("ollama", {"base_url": config.OLLAMA_URL, "model": config.OLLAMA_CHAT_MODEL})
     return {
         "order": order,                 # tried in this order; the next one is used when one fails or hits a limit
@@ -115,6 +116,19 @@ def resolved(pid: str, data: dict | None = None) -> dict:
         "needs_key": p.get("needs_key", True),
         "fallbacks": mine.get("fallbacks", []),
     }
+
+
+def url_allowed(url: str) -> bool:
+    """On a shared server, users' own provider and search addresses must be public internet addresses,
+    so nobody can make the server call into its own private network."""
+    if not url or config.allow_private():
+        return True
+    from . import web
+    try:
+        web.check_url(url)
+        return True
+    except web.WebError:
+        return False
 
 
 def masked(data: dict | None = None) -> dict:

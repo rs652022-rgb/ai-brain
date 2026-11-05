@@ -388,3 +388,32 @@ ol.steps li, ul.steps li { margin: 4px 0; }
   .task-body { grid-template-columns: 1fr; }
   .level { grid-template-columns: 1fr; }
 }
+
+/* ---------- Accounts, install, companion ---------- */
+.acct { width: 38px; height: 38px; padding: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.12); color: var(--white);
+  border: 1px solid rgba(255, 255, 255, 0.45); font: 600 13px/1 var(--mono); letter-spacing: .02em; flex: none; }
+.acct:hover { border-color: var(--signal); }
+.lock.auth { align-items: start; overflow-y: auto; padding: clamp(32px, 10vh, 120px) 16px 40px; }
+.auth-box { width: min(440px, 100%); }
+.auth-brand { display: flex; align-items: center; gap: 10px; font: 500 22px/1 var(--display); margin-bottom: 36px; }
+.auth-brand svg { width: 28px; height: 28px; }
+.auth-form h1 { font: 500 clamp(40px, 9vw, 60px)/0.95 var(--display); letter-spacing: -0.05em; margin: 0 0 12px; }
+.auth-form h1 .dot { color: var(--signal); }
+.auth-form p { color: rgba(255, 255, 255, 0.82); margin: 0 0 22px; }
+.auth-form .field { color: rgba(255, 255, 255, 0.75); margin-bottom: 14px; }
+.auth-form .field input { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.45); color: var(--white);
+  font: 400 16px/1.4 var(--text); letter-spacing: 0; }
+.auth-form .field input:focus { border-color: var(--signal); outline: none; box-shadow: 0 0 0 3px rgba(255, 216, 74, 0.25); }
+.auth-form .row button { flex: 1; padding: 14px 18px; font-size: 15px; }
+.auth-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px !important; font-size: 14px; }
+.auth-links a { color: var(--white); text-underline-offset: 3px; }
+.auth-links a[hidden] { display: none; }
+.auth .note { color: var(--signal); min-height: 1.4em; }
+.pair-out { display: flex; gap: 28px; flex-wrap: wrap; align-items: end; margin-top: 14px; padding: 16px; background: var(--tint); border-radius: var(--r); }
+.pair-out > div { display: flex; flex-direction: column; gap: 6px; }
+.pair-out .code { font: 500 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pair-out strong { font-size: 15px; word-break: break-all; }
+.pair-out strong.big { font-size: 30px; letter-spacing: .08em; color: var(--cobalt); }
+.pair-out p { flex-basis: 100%; margin: 0; }
+:root[data-theme="midnight"] .pair-out strong.big { color: #9fb2ff; }
+@media (max-width: 760px) { .acct { width: 34px; height: 34px; } }

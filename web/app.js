@@ -10,6 +10,7 @@ async function api(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data.locked) showLock();
+  if (res.status === 401 && data.login) window.showAuth?.();
   if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
 }
@@ -90,7 +91,7 @@ const SHEETS = {
   activity: ["Activity", "Every action, in order. This log can't be edited."],
   control: ["Device control", "Let it use your computer and phone. You decide what it may do, and you can stop it anytime."],
   settings: ["Settings", "AI models, web search and voice."],
-  master: ["Master Control", "Name, commands, switches, look and security. Only you change these."],
+  master: ["Master Control", "Your account, name, commands, switches, look and security. Only you change these."],
 };
 let currentTab = "chat";
 function showSheet(tab) {
@@ -694,8 +695,9 @@ async function loadLearn() {
 loaders.learn = loadLearn;
 
 // ---------- Start ----------
-loadBrand(true).then((open) => { if (open) { loadStatus(); loadChat(); } });
-setInterval(() => { if ($("#lock").hidden) loadStatus(); }, 30000);
+document.addEventListener("DOMContentLoaded", () =>   // after account.js: log in first on the web version
+  window.bootAuth().then((ok) => ok && loadBrand(true).then((open) => { if (open) { loadStatus(); loadChat(); } })));
+setInterval(() => { if ($("#lock").hidden && $("#auth").hidden) loadStatus(); }, 30000);
 window.addEventListener("load", () => {  // after voice.js has loaded
   const startTab = location.hash.slice(1);
   if (startTab && SHEETS[startTab]) openTab(startTab); else showSheet("chat");

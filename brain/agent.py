@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-from . import control, db, devices, llm, master
+from . import config, control, db, devices, llm, master
 
 log = logging.getLogger("brain.agent")
 
@@ -64,6 +64,7 @@ class Task:
         self._answer = threading.Event()
         self._reply: dict = {}
         self.vision = True
+        self.owner = config.user_key()     # whose task this is (accounts on a server are kept apart)
 
     def public(self, with_screen: bool = True) -> dict:
         out = {"id": self.id, "goal": self.goal, "device": self.device, "status": self.status, "steps": self.steps,
@@ -139,28 +140,34 @@ def start(goal: str, device: str = "auto") -> Task:
     t = Task(goal, _pick_device(goal, granted, device))
     with _lock:
         _tasks[t.id] = t
-        for old in sorted(_tasks.values(), key=lambda x: x.started)[:-20]:
+        for old in sorted((x for x in _tasks.values() if x.owner == t.owner), key=lambda x: x.started)[:-20]:
             _tasks.pop(old.id, None)
     db.audit("owner", "device.task", task=t.id, goal=t.goal[:300], device=t.device)
-    threading.Thread(target=_run, args=(t,), daemon=True).start()
+    config.spawn(_run, t)
     return t
 
 
+def _mine() -> list[Task]:
+    me = config.user_key()
+    return [t for t in list(_tasks.values()) if t.owner == me]
+
+
 def get(task_id: str) -> Task | None:
-    return _tasks.get(task_id)
+    t = _tasks.get(task_id)
+    return t if t and t.owner == config.user_key() else None
 
 
 def recent() -> list[dict]:
-    return [t.public(with_screen=False) for t in sorted(_tasks.values(), key=lambda x: -x.started)]
+    return [t.public(with_screen=False) for t in sorted(_mine(), key=lambda x: -x.started)]
 
 
 def running() -> Task | None:
-    return next((t for t in _tasks.values() if t.status in ("running", "waiting")), None)
+    return next((t for t in _mine() if t.status in ("running", "waiting")), None)
 
 
 def stop_all(why: str = "Stopped by you.") -> int:
     n = 0
-    for t in list(_tasks.values()):
+    for t in _mine():
         if t.status in ("running", "waiting"):
             t.stop(why)
             n += 1

@@ -84,6 +84,8 @@ def capabilities() -> dict:
 
 def install(component: str) -> dict:
     """Install an optional local voice package into this app's Python. Started only by the owner."""
+    if config.MULTIUSER:
+        raise VoiceError("Installing voice packages isn't possible from the web version.")
     pkg = {"whisper": "faster-whisper", "piper": "piper-tts", "edge": "edge-tts"}.get(component)
     if not pkg:
         raise VoiceError("Unknown component")
@@ -94,6 +96,8 @@ def install(component: str) -> dict:
 
 
 def download_piper_voice(name: str) -> dict:
+    if config.MULTIUSER:
+        raise VoiceError("Piper voices can't be downloaded on the web version.")
     if not re.fullmatch(r"[a-z]{2,3}_[A-Z]{2}-[A-Za-z0-9_]+-(x_low|low|medium|high)", name):
         raise VoiceError("Voice names look like en_US-lessac-medium or hi_IN-pratham-medium.")
     if not has_module("piper"):
@@ -147,6 +151,8 @@ def transcribe(audio: bytes, filename: str = "speech.webm", engine: str | None =
     if len(audio) < 1000:
         raise VoiceError("The recording was empty. Check that your microphone is allowed.")
     if engine == "local":
+        if not config.allow_private():
+            raise VoiceError("Local Whisper isn't available on the shared web version. Choose Browser or Groq Whisper in Settings → Voice.")
         return _local_whisper(audio, language)
     if engine == "groq":
         return _groq_whisper(audio, filename, language)
@@ -214,7 +220,7 @@ def speak(text: str) -> tuple[bytes, str]:
     text = clean_for_speech(text)[:4000]
     if not text:
         raise VoiceError("Nothing to say.")
-    if cfg()["tts"] == "edge":
+    if cfg()["tts"] == "edge" or not config.allow_private():   # Piper runs on your own computer only
         return _edge(text), "audio/mpeg"
     return _piper_wav(text), "audio/wav"
 

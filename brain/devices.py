@@ -347,7 +347,7 @@ class PC:
         p = control.folder_allowed(path)
         if not p.exists():
             raise DeviceError(f"{p} doesn't exist.")
-        if any(p == Path(f).expanduser().resolve() for f in control.get()["folders"]):
+        if any(p == Path(f).expanduser().resolve() for f in control.folders()):
             raise PermissionError("I won't remove a whole allowed folder.")
         bin_ = p.parent / "_deleted_by_brain"
         bin_.mkdir(exist_ok=True)
@@ -447,6 +447,8 @@ class Phone:
 
     def install_adb(self) -> dict:
         """Download Google's official Android platform-tools into data/tools. Started only by the owner."""
+        if config.MULTIUSER:
+            raise DeviceError("On the web version, the Brain Companion app on your computer installs ADB.")
         import httpx
         os_name = PLATFORM_TOOLS.get(SYSTEM)
         if not os_name:
@@ -733,8 +735,20 @@ def driver(device: str):
     return _pc if device == "pc" else _phone
 
 
+def _remote(payload: dict) -> dict:
+    """On a server with accounts, device actions run on the user's own computer via the companion."""
+    from . import hub
+    return hub.call(config.user_key(), payload | {"folders": control.get()["folders"]})
+
+
 def run(action: str, args: dict) -> dict:
     """Carry out one action that has already been permitted. Returns {'text': ..., 'shot': optional}."""
+    if config.MULTIUSER:
+        return _remote({"op": "run", "action": action, "args": args or {}})
+    return run_local(action, args)
+
+
+def run_local(action: str, args: dict) -> dict:
     a = args or {}
     pc, ph = _pc, _phone
     table = {
@@ -803,6 +817,12 @@ def _phone_look() -> dict:
 
 def look(device: str) -> dict:
     """A fresh view of a device: a screenshot plus any text description."""
+    if config.MULTIUSER:
+        return _remote({"op": "look", "device": device})
+    return look_local(device)
+
+
+def look_local(device: str) -> dict:
     if device == "phone":
         return _phone_look()
     out = {"text": "", "shot": _pc.screenshot()}
@@ -814,6 +834,18 @@ def look(device: str) -> dict:
 
 
 def status() -> dict:
+    if config.MULTIUSER:
+        from . import hub
+        conn = hub.connected(config.user_key())
+        base = {"system": "", "pc_installed": False, "adb_installed": False, "phones": [], "phone_error": ""}
+        if not conn:
+            return base | {"remote": True, "connected": False}
+        return base | {k: v for k, v in conn.info.items() if k in base} | {
+            "remote": True, "connected": True, "device_name": conn.device["name"]}
+    return status_local()
+
+
+def status_local() -> dict:
     pc_ok = PC.installed()
     out = {"system": SYSTEM, "pc_installed": pc_ok, "adb_installed": _phone.installed(), "phones": [],
            "phone_error": ""}
@@ -827,6 +859,8 @@ def status() -> dict:
 
 def install_pc() -> dict:
     """Install the PC control packages into this app's Python. Started only by the owner."""
+    if config.MULTIUSER:
+        raise DeviceError("On the web version, install the Brain Companion app on your computer instead.")
     pkgs = ["pyautogui", "pyperclip", "pillow"] + (["pygetwindow"] if SYSTEM == "Windows" else [])
     r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *pkgs], capture_output=True, text=True, timeout=900)
     if r.returncode != 0:

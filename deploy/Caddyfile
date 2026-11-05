@@ -1,0 +1,10 @@
+# Free HTTPS certificates from Let's Encrypt, renewed automatically.
+{$BRAIN_DOMAIN} {
+	encode gzip
+	reverse_proxy brain:8765
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
+}
