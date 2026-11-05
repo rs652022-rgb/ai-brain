@@ -339,3 +339,52 @@ button svg { width: 17px; height: 17px; flex: none; }
   .composer textarea { min-width: 0; padding: 10px 8px; }
   .composer button { padding: 10px 12px; }
 }
+
+/* ---------- Device control ---------- */
+.state button.stop-all, .stop-pill { background: var(--bad); color: var(--white); border: 0; font-weight: 600; }
+.state button.stop-all { margin-left: 0; }
+.state.off .lamp { background: rgba(255, 255, 255, 0.35); }
+.state.busy .lamp { animation: blink 0.9s steps(2) infinite; }
+.stop-pill { padding: 6px 10px; font: 600 11px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; border-radius: 2px; }
+.status .working { color: var(--signal); }
+ol.steps, ul.steps { margin: 4px 0 14px; padding-left: 20px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+ol.steps li, ul.steps li { margin: 4px 0; }
+.levels { display: grid; gap: 0; }
+.level { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+.level small { display: block; color: var(--muted); font-size: 13px; }
+.level .seg button { padding: 7px 12px; font-size: 13px; }
+.level .seg button:disabled { opacity: .35; }
+.shot { display: block; max-width: 100%; margin-top: 14px; border: 1px solid var(--line-strong); border-radius: var(--r); }
+.shot.phone { max-width: 280px; }
+
+.task { margin-top: 16px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--sheet); color: var(--ink); padding: 16px; }
+.msg .task { margin-top: 12px; }
+.task-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.task-head strong { font: 500 17px/1.25 var(--display); letter-spacing: -0.01em; flex: 1 1 200px; }
+.task-state { font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 6px 8px; border-radius: 2px; background: var(--tint); color: var(--cobalt); }
+.task-state.waiting { background: var(--signal); color: #0c1640; }
+.task-state.done { background: var(--cobalt); color: var(--white); }
+.task-state.failed, .task-state.stopped { background: transparent; color: var(--bad); border: 1px solid currentColor; }
+.task-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 16px; margin-top: 12px; }
+.task-body.no-screen, .task-body.big { grid-template-columns: 1fr; }
+.task-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; font-size: 13.5px; }
+.task-steps li { padding: 7px 10px; border-left: 3px solid var(--cobalt); background: var(--tint); border-radius: 0 var(--r) var(--r) 0; }
+.task-steps li code { font: 600 12px/1.4 var(--mono); }
+.task-steps li .why { display: block; color: var(--muted); font-size: 12.5px; }
+.task-steps li.error, .task-steps li.blocked, .task-steps li.failed { border-left-color: var(--bad); }
+.task-steps li.denied { border-left-color: var(--warn); }
+.task-steps li.waiting { border-left-color: var(--signal); }
+.task-screen img { width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r); cursor: zoom-in; display: block; }
+.task-screen .cap { font: 500 11px/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
+.task-ask { margin-top: 12px; padding: 14px; background: var(--signal); color: #0c1640; border-radius: var(--r); }
+.task-ask p { margin: 0 0 4px; font-weight: 600; }
+.task-ask pre { margin: 6px 0 0; white-space: pre-wrap; font: 500 12.5px/1.45 var(--mono); max-height: 160px; overflow: auto; }
+.task-ask .row button { background: #0c1640; color: var(--white); border: 0; }
+.task-ask .row button.ghost { background: transparent; color: #0c1640; border: 1px solid #0c1640; }
+.task-ask input { background: var(--white); color: #0c1640; }
+.task-summary { margin: 12px 0 0; font-size: 15px; }
+.task-foot { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .task-body { grid-template-columns: 1fr; }
+  .level { grid-template-columns: 1fr; }
+}

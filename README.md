@@ -13,7 +13,9 @@ Your personal AI Brain, running privately on your laptop. Phase 1 gives it a mem
 - **WhatsApp import**: turns your own messages into memories and writing samples (other people's messages are not stored)
 - **Safety core** and an **append-only activity log** that the Brain cannot edit or delete
 
-Phase 1 cannot act on your devices, send messages or spend money. That comes in later phases, behind permission tiers.
+- **Device control** (off until you switch it on): it operates your **computer** (mouse, keyboard, screen, apps, files, commands) and your **Android phone** (taps, typing, apps, calls and messages), with per-action permissions, approvals and an instant stop
+
+It never spends money, types passwords or card details, or solves CAPTCHAs.
 
 ## Setup (about 10 minutes, free)
 
@@ -69,6 +71,57 @@ Open the **Master** tab to change anything about your Brain:
 - **Security:** set a **Master PIN**. Once set, the PIN is needed to change Master Control and Settings (API keys). Turn on **Lock the whole app** to ask for the PIN before showing anything. Only a salted hash of the PIN is stored; after 5 wrong tries it waits a minute. Forgot it? Stop the app and delete the `"master"` section's `pin_hash` from `data/settings.json`.
 - **Data:** download a full backup (memories, journal, chats, learned knowledge, Identity File). API keys and the PIN are left out.
 
+## Device control (your computer and phone)
+
+Open the **Control** tab. Nothing happens until you **turn it on** and **allow a device**. You allow it once, and it stays allowed until you switch it off.
+
+**Your computer:** switch on **Allow control of this computer**, then press **See my screen (test)**. The packages it needs install automatically with `start.bat`; if you see an **Install PC control** button, click it once.
+
+**Your Android phone:**
+1. On the phone: Settings → About phone → tap **Build number** 7 times.
+2. Settings → Developer options → switch on **USB debugging** (on Xiaomi/Redmi/POCO also **USB debugging (Security settings)**).
+3. In Control, click **Install ADB** (Google's free Android tools), plug the phone in by USB and tap **Allow** on the phone.
+4. No cable? With both on the same Wi-Fi, use **Wireless debugging → Pair device with pairing code** on the phone, enter the IP:port and code in Control → **Pair**, then **Connect** with the IP:port from the Wireless debugging screen.
+5. Switch on **Allow control of my phone** and press **See my phone screen (test)**.
+
+iPhones can't be controlled: Apple doesn't allow it.
+
+**Give it tasks** in Chat or by voice, for example:
+- "Open Chrome and search for flights from Delhi to Goa on 20 December"
+- "Open Notepad and write my to-do list for tomorrow"
+- "On my phone, open WhatsApp and send Amit 'running 10 minutes late'"
+- "/pc take a screenshot and tell me which apps are open"
+- "Lock my laptop"
+
+Each task appears as a live card that shows every step and the latest view of the screen. You can also type a task into **Give it a task** in Control. `/do`, `/pc` and `/phone` force a device task.
+
+**You decide what it may do.** For each kind of action choose **Allowed**, **Ask me** (it stops and waits for you to press Allow) or **Off**:
+
+| Kind | Default |
+|---|---|
+| See the screen | Allowed |
+| Open apps and websites | Allowed |
+| Mouse and keyboard / touch | Allowed |
+| Read files | Allowed |
+| Change files | Ask me |
+| Run commands | Ask me |
+| Lock, sleep, shut down | Always asks |
+| Calls and messages | Always asks |
+
+Deleting always asks too, and it never erases anything: files go into a `_deleted_by_brain` folder next to them. Files can only be read or changed inside the folders you list (Desktop, Documents and Downloads to start with).
+
+**Stopping it:** press **Stop** (in the header or in the task card), say or type **stop** or your rest word, or push the mouse hard into any screen corner.
+
+**Safety rules it can't switch off:**
+- It never types passwords, OTPs, PINs, card, bank or ID numbers, never confirms payments, and never solves CAPTCHAs. It asks you to do those parts.
+- Instructions it reads on screen (websites, emails, messages) are treated as information, never as orders.
+- Dangerous commands (formatting disks, disabling antivirus, deleting system folders, downloading and running code) are blocked.
+- Every step goes into the Activity log.
+- Only pages served by the Brain on your computer can talk to it, so other websites can't send it commands.
+- Set a **Master PIN** so nobody else can turn device control on or change it.
+
+**Which AI model:** the Brain sees your screen through screenshots, so use a model that understands images. Free **Gemini** models work well (Groq's Llama 4 Scout also works). With a text-only model it still works on the phone (it reads the on-screen buttons) and with keyboard shortcuts on the computer, but less reliably.
+
 ## Forgetting things
 
 Say or type **"forget everything about mathematics"** (or "remove X from your memory", "X wali baat bhool jao"). The Brain lists every memory and learned source about it with a tick box; nothing is deleted until you press **Forget selected**. You can also clear the conversation in the same step. This works even when your AI models are out of free quota.
@@ -115,7 +168,7 @@ For full privacy choose **Local Whisper + Piper**. English, Hindi and Hinglish a
 
 Things you can say: "Learn about …", "Search the web for …", "Remember that …", "Add to my journal: …", "From now on …", "Every week learn about …", "Switch to coach mode", "What did I say about …", "Stop".
 
-Voice can't yet control your laptop or phone (opening apps, sending messages, calls). That comes in Phase 3, behind permission tiers.
+With Device control on, voice commands like "open YouTube" or "on my phone, open WhatsApp" work too, and it speaks the result when the task is done.
 
 ## Privacy
 
@@ -148,6 +201,9 @@ brain/
   settings.py      your providers, keys and order (data/settings.json)
   llm.py           universal connector with automatic fallback
   master.py        Master Control: name, commands, rest mode, switches, PIN and app lock
+  control.py       Device control permissions: on/off, allowed devices, levels, folders
+  devices.py       drivers for this computer (pyautogui) and Android phones (ADB), safety guards
+  agent.py         the device task loop: look, decide one step, check permission, act, repeat
   memory.py        add, tag, search, edit, forget, approval queue, rules
   web.py           web search, safe page reading, PDF/Word reading
   knowledge.py     what it learned: sources, study notes, scheduled topics

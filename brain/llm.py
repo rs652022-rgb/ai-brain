@@ -164,6 +164,8 @@ def call(p: dict, system: str, messages: list[dict], max_tokens: int = 1200, jso
          timeout=None) -> str:
     """Send one chat request to provider p (a settings.resolved() dict)."""
     pid, kind = p["id"], p["kind"]
+    has_images = any(isinstance(m.get("content"), list) for m in messages)
+    messages = _with_images(kind, messages) if has_images else messages
     if p["needs_key"] and not p["api_key"]:
         raise ProviderError(pid, "no API key set", retryable=True)
     if not p["model"]:
@@ -201,7 +203,7 @@ def call(p: dict, system: str, messages: list[dict], max_tokens: int = 1200, jso
             data = _post(pid, f"{p['base_url']}/chat/completions", headers, payload | opt, timeout)
             break
         except ProviderError as exc:
-            if opt and exc.status == 400:     # this model doesn't accept that option: try the next one
+            if opt and exc.status == 400 and not has_images:   # model doesn't accept that option: try the next
                 _reject(pid, p["model"], opt)
                 continue
             raise
@@ -216,6 +218,32 @@ def call(p: dict, system: str, messages: list[dict], max_tokens: int = 1200, jso
     if not content:
         raise ProviderError(pid, "empty reply")
     return content
+
+
+def _with_images(kind: str, messages: list[dict]) -> list[dict]:
+    """Messages whose content is a list of parts ({"type": "text", "text"} or
+    {"type": "image", "data": base64, "mime"}) turned into each provider's own format."""
+    out = []
+    for m in messages:
+        parts = m.get("content")
+        if not isinstance(parts, list):
+            out.append(m)
+            continue
+        texts = [x["text"] for x in parts if x.get("type") == "text"]
+        imgs = [x for x in parts if x.get("type") == "image"]
+        if kind == "ollama":
+            out.append({"role": m["role"], "content": "\n\n".join(texts), "images": [x["data"] for x in imgs]})
+        elif kind == "anthropic":
+            out.append({"role": m["role"], "content": [
+                *({"type": "image", "source": {"type": "base64", "media_type": x.get("mime", "image/jpeg"),
+                                               "data": x["data"]}} for x in imgs),
+                *({"type": "text", "text": t} for t in texts)]})
+        else:
+            out.append({"role": m["role"], "content": [
+                *({"type": "text", "text": t} for t in texts),
+                *({"type": "image_url", "image_url": {"url": f"data:{x.get('mime', 'image/jpeg')};base64,{x['data']}"}}
+                  for x in imgs)]})
+    return out
 
 
 # ---------- Routing with fallback ----------

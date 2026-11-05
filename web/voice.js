@@ -270,8 +270,10 @@ async function talkLoop() {
   while (V.talk) {
     V.stopFlag = false; V.busy = true;
     try {
+      while (V.saying) await new Promise((r) => setTimeout(r, 200));   // don't listen to our own voice
       const text = await listenOnce();
       if (!V.talk) break;
+      if (V.saying) continue;
       if (!text) { if (++empty >= 3) { setTalk(false); addMsg("assistant", "I stopped listening because it was quiet. Click 🎙 Talk to continue."); } continue; }
       empty = 0;
       if (/^(goodbye|bye|that's all|stop listening|band karo)[.!]?$/i.test(text)) { setTalk(false); await speak("Okay, talk to you later."); break; }
@@ -407,4 +409,11 @@ $("#v-test").addEventListener("click", async () => {
 });
 
 window.voiceReload = loadVoice;
+// Device tasks speak their questions and results (only if speaking is on).
+window.brainSay = async (text) => {
+  if (!text || !wantsSpeech()) return;
+  V.saying = true;
+  stopListening();
+  try { await speak(text); } finally { V.saying = false; }
+};
 loadVoice();

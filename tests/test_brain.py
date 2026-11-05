@@ -46,7 +46,7 @@ def test_memory_chat_and_approval_flow(app):
     assert r.status_code == 200, body
     assert body["cited"] == [1]
     assert "Amit lives in Pune" in calls["system"]
-    assert "PIN" not in calls["system"]            # sealed memories stay out by default
+    assert "bank PIN hint" not in calls["system"]  # sealed memories stay out by default
     assert "<safety_core>" in calls["system"]
     assert calls["private"] is False
 

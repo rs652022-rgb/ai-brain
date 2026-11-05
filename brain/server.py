@@ -15,7 +15,8 @@ import time
 
 from fastapi import Response
 
-from . import config, core, db, identity, importer, interview, knowledge, llm, master, memory, settings, voice, web
+from . import (agent, config, control, core, db, devices, identity, importer, interview, knowledge, llm, master,
+               memory, settings, voice, web)
 from .providers import PRESETS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -63,10 +64,24 @@ SESSION_COOKIE = "brain_session"
 OPEN_PATHS = ("/api/master/public", "/api/master/unlock", "/api/master/lock")
 
 
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
+
+
 @app.middleware("http")
 async def _require_unlock(request, call_next):
-    """When 'Lock the whole app' is on, every API call needs the Master PIN session."""
+    """Only this computer's own pages may use the API, and with 'Lock the whole app' on, only after the PIN.
+
+    The Host and Origin checks stop other websites open in your browser (and DNS-rebinding tricks) from
+    sending commands to the Brain, which matters now that it can operate your devices.
+    """
     path = request.url.path
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0] if not (request.headers.get("host") or "").startswith("[") \
+        else (request.headers.get("host") or "").split("]")[0] + "]"
+    origin = request.headers.get("origin")
+    if host not in LOCAL_HOSTS or (origin and origin != "null" and
+                                   origin.split("://", 1)[-1].rsplit(":", 1)[0] not in LOCAL_HOSTS):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"detail": "Only this computer can use the Brain."})
     if path.startswith("/api/") and path not in OPEN_PATHS and master.get()["lock_app"]:
         if not master.session_ok(request.cookies.get(SESSION_COOKIE)):
             from fastapi.responses import JSONResponse
@@ -107,6 +122,8 @@ def status():
         "web_mode": settings.load().get("web_mode", "ask"),
         "memory": memory.stats(),
         "interview": interview.progress(),
+        "control": {"enabled": control.get()["enabled"], "devices": control.get()["devices"],
+                    "running": bool(agent.running())},
     }
 
 
@@ -579,6 +596,128 @@ def chat_history():
 def chat_clear():
     core.clear_history()
     return {"ok": True}
+
+
+# ---------- Device control ----------
+
+@app.get("/api/control")
+def control_get(request: Request):
+    c = control.get()
+    return {"settings": c, "status": devices.status(), "categories": control.CATEGORIES,
+            "always_ask": sorted(control.ALWAYS_ASK), "unlocked": master.session_ok(request.cookies.get(SESSION_COOKIE)),
+            "pin_set": bool(master.get()["pin_hash"])}
+
+
+class ControlIn(BaseModel):
+    changes: dict
+
+
+@app.put("/api/control")
+def control_put(body: ControlIn, request: Request):
+    _need_master(request)
+    before = control.get()
+    after = control.update(body.changes)
+    changed = {k: after[k] for k in after if after[k] != before.get(k)}
+    db.audit("owner", "control.update", changed=changed)
+    if not after["enabled"] or not any(after["devices"].values()):
+        agent.stop_all("Stopped: device control was switched off.")
+    return after
+
+
+class ControlInstallIn(BaseModel):
+    component: str          # pc | adb
+
+
+@app.post("/api/control/install")
+def control_install(body: ControlInstallIn, request: Request):
+    _need_master(request)
+    try:
+        out = devices.install_pc() if body.component == "pc" else devices.driver("phone").install_adb()
+    except devices.DeviceError as exc:
+        _err(exc)
+    db.audit("owner", "control.install", component=body.component)
+    return out
+
+
+class PhoneConnectIn(BaseModel):
+    address: str
+    code: str = ""
+
+
+@app.post("/api/control/phone/connect")
+def phone_connect(body: PhoneConnectIn, request: Request):
+    _need_master(request)
+    ph = devices.driver("phone")
+    try:
+        paired = ph.pair(body.address.strip(), body.code.strip()) if body.code.strip() else ""
+        connected = "" if body.code.strip() else ph.connect(body.address.strip())
+    except devices.DeviceError as exc:
+        _err(exc)
+    db.audit("owner", "control.phone_connect", address=body.address, paired=bool(body.code))
+    return {"ok": True, "message": paired or connected, "phones": devices.status()["phones"]}
+
+
+@app.get("/api/control/look/{device}")
+def control_look(device: str):
+    """A test screenshot, so you can check control works before giving it a task."""
+    if device not in ("pc", "phone"):
+        _err(ValueError("device must be pc or phone"))
+    if not control.ready(device):
+        _err(PermissionError("Allow this device in the Control tab first."), 403)
+    try:
+        view = devices.look(device)
+    except (devices.DeviceError, PermissionError) as exc:
+        _err(exc)
+    db.audit("owner", "control.test_look", device=device)
+    shot = view["shot"]
+    return {"image": f"data:{shot['mime']};base64,{shot['data']}", "text": view.get("text", ""),
+            "width": shot["width"], "height": shot["height"]}
+
+
+class TaskIn(BaseModel):
+    goal: str
+    device: str = "auto"
+
+
+@app.post("/api/control/task")
+def control_task(body: TaskIn):
+    try:
+        return agent.start(body.goal, body.device).public(with_screen=False)
+    except (PermissionError, ValueError) as exc:
+        _err(exc, 403 if isinstance(exc, PermissionError) else 400)
+
+
+@app.get("/api/control/tasks")
+def control_tasks():
+    return agent.recent()
+
+
+@app.get("/api/control/task/{task_id}")
+def control_task_get(task_id: str, screen: bool = True):
+    t = agent.get(task_id)
+    if not t:
+        _err(KeyError("No such task"), 404)
+    return t.public(with_screen=screen)
+
+
+class TaskReplyIn(BaseModel):
+    approve: bool | None = None
+    answer: str = ""
+
+
+@app.post("/api/control/task/{task_id}/reply")
+def control_task_reply(task_id: str, body: TaskReplyIn):
+    t = agent.get(task_id)
+    if not t or t.status != "waiting":
+        _err(ValueError("That task isn't waiting for you."))
+    db.audit("owner", "device.reply", task=task_id, approve=body.approve, answered=bool(body.answer))
+    t.respond(body.approve, body.answer)
+    return {"ok": True}
+
+
+@app.post("/api/control/stop")
+def control_stop():
+    return {"stopped": agent.stop_all()}
 
 
 # ---------- Memories ----------

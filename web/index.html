@@ -26,6 +26,7 @@
     <button data-tab="identity">Identity</button>
     <button data-tab="import">Import</button>
     <button data-tab="activity">Activity</button>
+    <button data-tab="control">Control</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="master">Master</button>
   </nav>
@@ -324,6 +325,101 @@
   </section>
 
   <!-- MASTER CONTROL -->
+  <section id="tab-control" class="tab">
+    <div class="card" id="c-gate" hidden>
+      <h2>Unlock to change device control</h2>
+      <p class="hint">Device control is protected by your Master PIN.</p>
+      <div class="row"><input type="password" id="c-gate-pin" placeholder="Master PIN" aria-label="Master PIN" style="max-width:260px"><button class="primary" id="c-gate-go">Unlock</button></div>
+      <p class="note" id="c-gate-note"></p>
+    </div>
+
+    <div class="state" id="c-state">
+      <span class="lamp"></span><strong id="c-state-text">Device control is off</strong>
+      <span id="c-state-hint" class="mono"></span>
+      <button id="c-power">Turn on</button>
+      <button id="c-stop" class="stop-all" hidden>Stop everything</button>
+    </div>
+    <p class="hint" id="c-pin-hint" hidden style="margin-top:12px">Tip: set a Master PIN in the Master tab first, so nobody else using this computer can turn this on or change it.</p>
+
+    <div class="card" style="margin-top:22px">
+      <h2>Give it a task</h2>
+      <p class="hint">Or just say it in Chat: "open Chrome and search for flights to Goa", "on my phone open WhatsApp", "/pc take a screenshot and tell me what's open". Say <strong>stop</strong> anytime.</p>
+      <div class="row">
+        <input id="c-goal" placeholder="e.g. Open Notepad and write my to-do list for tomorrow" aria-label="Task">
+        <select id="c-device" aria-label="Device" style="flex:0 0 170px"><option value="auto">Choose for me</option><option value="pc">This computer</option><option value="phone">Android phone</option></select>
+        <button class="primary" id="c-run">Run</button>
+      </div>
+      <div id="c-task"></div>
+    </div>
+
+    <div class="card">
+      <h2>This computer</h2>
+      <p class="hint" id="c-pc-status">Checking…</p>
+      <div class="switches"><label class="switch"><span>Allow control of this computer<small>Mouse, keyboard, screen, apps, files and commands, within the limits below. Stays allowed until you switch it off.</small></span><input type="checkbox" id="c-allow-pc"></label></div>
+      <div class="row"><button id="c-install-pc" hidden>Install PC control</button><button id="c-look-pc">See my screen (test)</button></div>
+      <p class="note" id="c-pc-note"></p>
+      <img id="c-pc-shot" class="shot" alt="Screenshot of this computer" hidden>
+    </div>
+
+    <div class="card">
+      <h2>Android phone</h2>
+      <ol class="steps">
+        <li>On the phone: Settings → About phone → tap <strong>Build number</strong> 7 times to unlock Developer options.</li>
+        <li>Settings → Developer options → switch on <strong>USB debugging</strong> (and on Xiaomi/Redmi/POCO also <strong>USB debugging (Security settings)</strong>).</li>
+        <li>Click <strong>Install ADB</strong> below (Google's free Android tools, about 15 MB), plug the phone in with a USB cable, and tap <strong>Allow</strong> on the phone.</li>
+        <li>No cable? Phone and laptop on the same Wi-Fi: Developer options → <strong>Wireless debugging</strong> → Pair device with pairing code. Enter the IP:port and code below, then Connect with the IP:port shown on the Wireless debugging screen.</li>
+      </ol>
+      <p class="hint" id="c-phone-status">Checking…</p>
+      <div class="row"><button id="c-install-adb" hidden>Install ADB</button><button id="c-phone-refresh">Refresh phones</button></div>
+      <div class="row">
+        <input id="c-pair-addr" placeholder="Pairing IP:port, e.g. 192.168.1.5:37123" aria-label="Pairing address">
+        <input id="c-pair-code" placeholder="6-digit code" aria-label="Pairing code" style="flex:0 0 140px" inputmode="numeric">
+        <button id="c-pair">Pair</button>
+      </div>
+      <div class="row">
+        <input id="c-conn-addr" placeholder="Wireless debugging IP:port, e.g. 192.168.1.5:41234" aria-label="Connect address">
+        <button id="c-connect">Connect</button>
+      </div>
+      <div class="switches"><label class="switch"><span>Allow control of my phone<small>Screen, taps, typing, apps and links. Calls and messages always ask you first.</small></span><input type="checkbox" id="c-allow-phone"></label></div>
+      <div class="row"><button id="c-look-phone">See my phone screen (test)</button></div>
+      <p class="note" id="c-phone-note"></p>
+      <img id="c-phone-shot" class="shot phone" alt="Screenshot of the phone" hidden>
+      <p class="hint" style="margin-top:14px"><strong>iPhone:</strong> Apple doesn't let other apps control an iPhone, so it can't be added. You can still talk to your Brain from the iPhone's browser in a later version.</p>
+    </div>
+
+    <div class="card">
+      <h2>What it may do</h2>
+      <p class="hint"><strong>Allowed</strong>: does it without asking. <strong>Ask me</strong>: stops and waits for your OK on each step. <strong>Off</strong>: never. Calls, messages, shutting down and deleting always ask, whatever you choose.</p>
+      <div id="c-levels" class="levels"></div>
+    </div>
+
+    <div class="card">
+      <h2>Folders it can use</h2>
+      <p class="hint">It can only read and change files inside these folders (one per line). Deleting never erases anything: files are moved to a <code>_deleted_by_brain</code> folder so you can undo.</p>
+      <textarea id="c-folders" rows="4"></textarea>
+      <div class="mgrid" style="margin-top:6px"><label class="field">Most steps per task<input id="c-max" type="number" min="3" max="80"></label></div>
+    </div>
+
+    <div class="card">
+      <h2>Always in your hands</h2>
+      <ul class="steps">
+        <li>Press <strong>Stop everything</strong>, say or type <strong>stop</strong>, or push the mouse hard into any screen corner: it stops at once.</li>
+        <li>It never types passwords, OTPs, PINs, card or bank details, never pays, and never solves CAPTCHAs. It hands those to you.</li>
+        <li>Instructions written on websites, emails or messages on screen are ignored; it only follows you.</li>
+        <li>Dangerous commands (wiping disks, disabling antivirus, downloading and running code) are blocked outright.</li>
+        <li>Every step is in the Activity log, which can't be edited.</li>
+      </ul>
+    </div>
+
+    <div class="row"><button class="primary" id="c-save">Save device control</button></div>
+    <p class="note" id="c-note"></p>
+
+    <div class="card" style="margin-top:22px">
+      <h2>Recent tasks</h2>
+      <div id="c-recent" class="list"></div>
+    </div>
+  </section>
+
   <section id="tab-master" class="tab">
     <div class="card" id="m-gate" hidden>
       <h2>Unlock Master Control</h2>
@@ -414,6 +510,7 @@
 </main>
 
 <script src="/static/app.js"></script>
+<script src="/static/control.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>

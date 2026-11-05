@@ -84,14 +84,14 @@ def save(data: dict) -> dict:
         backups = cfg.get("fallbacks")
         if isinstance(backups, list):
             clean["providers"][pid]["fallbacks"] = [str(m).strip() for m in backups if str(m).strip()][:10]
-    # Master Control is saved through master.py; other saves (the Settings tab) must keep it as it is.
-    if isinstance(data.get("master"), dict):
-        clean["master"] = data["master"]
-    else:
-        try:
-            clean["master"] = json.loads(path().read_text(encoding="utf-8")).get("master", {})
-        except (OSError, ValueError):
-            clean["master"] = {}
+    # Master Control and Device control are saved through their own modules; other saves (the Settings
+    # tab) must keep them as they are.
+    try:
+        on_disk = json.loads(path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        on_disk = {}
+    for key in ("master", "control"):
+        clean[key] = data[key] if isinstance(data.get(key), dict) else on_disk.get(key, {})
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -121,6 +121,7 @@ def masked(data: dict | None = None) -> dict:
     """Settings safe to send to the browser: keys are shown only as their last 4 characters."""
     data = json.loads(json.dumps(data or load()))
     data.pop("master", None)   # PIN hash and Master Control are served separately
+    data.pop("control", None)
     for cfg in list(data["providers"].values()) + list(data.get("search", {}).values()):
         k = cfg.get("api_key", "")
         if k:

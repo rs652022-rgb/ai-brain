@@ -88,6 +88,7 @@ const SHEETS = {
   identity: ["Identity", "Your values, style and decision rules. This is who it is."],
   import: ["Import", "Bring in your own messages from WhatsApp."],
   activity: ["Activity", "Every action, in order. This log can't be edited."],
+  control: ["Device control", "Let it use your computer and phone. You decide what it may do, and you can stop it anytime."],
   settings: ["Settings", "AI models, web search and voice."],
   master: ["Master Control", "Name, commands, switches, look and security. Only you change these."],
 };
@@ -118,7 +119,8 @@ async function loadStatus() {
       ? `<span class="ok">${ready[0].label.split(" (")[0]}${ready.length > 1 ? ` + ${ready.length - 1} backup` : ""}</span>`
       : `<span class="off">Add an AI key in Settings</span>`;
     const rest = s.resting ? `<span class="resting">Resting</span>` : "";
-    $("#status").innerHTML = `${rest}${main}<span class="count">${s.memory.total} memories</span><span class="count">${s.knowledge.sources} learned</span>`;
+    const busy = s.control?.running ? `<span class="working">Using your devices</span><button class="stop-pill" type="button" onclick="stopDevices()">Stop</button>` : "";
+    $("#status").innerHTML = `${busy}${rest}${main}<span class="count">${s.memory.total} memories</span><span class="count">${s.knowledge.sources} learned</span>`;
     if (s.resting !== window.BRAND.resting) { window.BRAND.resting = s.resting; if (currentTab === "master") renderMasterState(); }
     const b = $("#pending-badge");
     b.hidden = !s.memory.pending; b.textContent = s.memory.pending;
@@ -207,6 +209,7 @@ function forgetPicker(f) {
 function replyExtras(r) {
   const extra = el("div", {});
   if (r.forget) extra.append(forgetPicker(r.forget));
+  if (r.task) extra.append(taskView(r.task.id, { spoken: r.spoken }));
   if (r.web_sources?.length) {
     const box = el("div", { class: "sources" }, el("strong", {}, r.action === "chat" ? "Web sources (not saved):" : "Sources learned:"),
       ...r.web_sources.map((s, i) => el("a", { href: s.url, target: "_blank", rel: "noopener" }, `[${i + 1}] ${s.title || s.url}`)));
@@ -280,7 +283,7 @@ async function sendChat(e, opts = {}) {
     if (!result) throw new Error("The reply was cut off. Please try again.");
     bubble.classList.remove("thinking");
     bubble.textContent = result.reply;
-    bubble.append(replyExtras(result));
+    bubble.append(replyExtras({ ...result, spoken: !!opts.spoken }));
     if (result.action === "mode" && result.new_mode) setMode(result.new_mode);
     if ("resting" in result) { window.BRAND.resting = result.resting; loadStatus(); }
     setTimeout(loadStatus, 4000); // pick up proposed memories

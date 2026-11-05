@@ -7,6 +7,8 @@ Learning is driven only by the owner. The Brain recognises explicit instructions
   /web <question> (or "search the web for ...")          answer from a live web search (not saved)
   "every week learn about X"                              schedule recurring research
   "remember that ...", "add to my journal: ...", "switch to coach mode"
+  /do <task>, /pc <task>, /phone <task> (or "open chrome and ...", "on my phone ...")  operate a device,
+    only when the owner has switched on Device control and allowed that device
 Nothing else makes it learn. It never edits its own rules or safety core.
 """
 import logging
@@ -14,7 +16,7 @@ import re
 import threading
 from datetime import datetime
 
-from . import config, db, identity, knowledge, llm, master, memory, settings, web
+from . import agent, config, control, db, identity, knowledge, llm, master, memory, settings, web
 
 log = logging.getLogger("brain.core")
 
@@ -59,9 +61,36 @@ def forget_topic(message: str) -> str:
     return " ".join(out).strip()
 
 
+DEVICE_CMD = re.compile(r"^/(do|pc|phone)\s+(.+)$", re.I | re.S)
+DEVICE_VERB = re.compile(
+    r"^(?:(?:please|pls|can you|could you|jarvis|hey)\W+)*(?:open(?! up)|launch|close|click|double[- ]click|right[- ]click|"
+    r"type|press|scroll|minimi[sz]e|maximi[sz]e|take a screenshot|screenshot|lock (?:my |the )?(?:pc|laptop|computer|screen)|"
+    r"shut ?down|restart (?:my |the )?(?:pc|laptop|computer)|call(?! me\b)|dial|text(?! me\b)|send (?:a |an )?(?:message|"
+    r"whatsapp|sms|text)|whatsapp|play(?! with)|pause|mute|unmute|turn (?:up|down) the volume|volume (?:up|down)|"
+    r"go to (?:https?://|www\.)|search (?:on|in) (?:youtube|google|chrome|amazon|flipkart))\b", re.I)
+DEVICE_PLACE = re.compile(r"\b(?:on|in|from|using) (?:my|the) (?:pc|laptop|computer|desktop|phone|mobile|screen)\b", re.I)
+
+
+def device_intent(message: str) -> tuple[str, str] | None:
+    """(device, task) when the message asks to operate a device; None otherwise."""
+    m = message.strip()
+    cmd = DEVICE_CMD.match(m)
+    if cmd:
+        return {"do": "auto", "pc": "pc", "phone": "phone"}[cmd.group(1).lower()], cmd.group(2).strip()
+    if DEVICE_VERB.match(m) or DEVICE_PLACE.search(m):
+        low = m.lower()
+        dev = "phone" if re.search(r"\b(phone|mobile)\b", low) else "pc" if re.search(r"\b(pc|laptop|computer|desktop)\b", low) else "auto"
+        return dev, m
+    return None
+
+
 def parse_command(message: str) -> tuple[str, dict]:
     m = message.strip()
     low = m.lower()
+
+    dev = device_intent(m)
+    if dev:
+        return "device", {"device": dev[0], "task": dev[1], "explicit": bool(DEVICE_CMD.match(m))}
 
     if _FORGET_RE.search(m) and not URL_RE.search(m):
         return "forget", {"topic": forget_topic(m)}
@@ -280,12 +309,15 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
     if master.matches(message, m["stop_words"]) or message.lower().strip(" .!") in {w.strip(" .!") for w in STOP_WORDS}:
         if len(message.split()) <= 3:
             db.audit("owner", "stop")
-            return {"done": {"reply": "Stopped. Nothing is running.", "memories_used": [], "model": "none", "action": "stop"}}
+            n = agent.stop_all()
+            return {"done": {"reply": "Stopped." + (" I've stopped the device task." if n else " Nothing is running."),
+                             "memories_used": [], "model": "none", "action": "stop"}}
 
     # 0. Rest and wake commands (set in Master Control)
     wake = m["wake_words"][0] if m["wake_words"] else "hey brain"
     if master.matches(message, m["sleep_words"]):
         master.set_resting(True)
+        agent.stop_all("Stopped: you sent me to rest.")
         db.audit("owner", "brain.rest")
         return {"done": _reply(message, f"Okay, going to rest. Say \"{wake}\" when you need me.", mode, conversation,
                                action="rest", resting=True)}
@@ -307,6 +339,23 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
 
     # 1. Explicit instructions from the owner
     action, args = parse_command(message)
+    if action == "device":
+        dev = args["device"]
+        if not control.ready(None if dev == "auto" else dev):
+            if args["explicit"] or DEVICE_PLACE.search(message):
+                what = {"pc": "this computer", "phone": "your phone"}.get(dev, "your devices")
+                return {"done": _reply(message, f"I can't control {what} yet. Open the Control tab, switch on Device "
+                                       "control and allow the device. You stay in charge: risky steps ask you first.",
+                                       mode, conversation, action="device_off")}
+            action, args = "chat", {}          # sounds like an instruction, but control is off: just talk
+        else:
+            try:
+                t = agent.start(args["task"], dev)
+            except (PermissionError, ValueError) as exc:
+                return {"done": _reply(message, str(exc), mode, conversation, action="device_off")}
+            where = "your phone" if t.device == "phone" else "this computer"
+            return {"done": _reply(message, f"On it, using {where}. Watch the steps below, and say \"stop\" anytime.",
+                                   mode, conversation, action="device", task=t.public(with_screen=False))}
     try:
         if action == "mode":
             db.audit("owner", "mode.switch", mode=args["mode"])
