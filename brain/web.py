@@ -22,6 +22,8 @@ MAX_PAGE_BYTES = 3_000_000
 MAX_TEXT_CHARS = 60_000
 
 SEARCH_PRESETS = {
+    "freellmapi": {"label": "FreeLLMAPI search", "needs_key": False, "free": True, "key_url": "",
+                   "note": "Uses your FreeLLMAPI gateway's search engines (set up FreeLLMAPI under AI models)."},
     "duckduckgo": {"label": "DuckDuckGo", "needs_key": False, "free": True, "key_url": "",
                    "note": "No key needed. Can be rate-limited if used heavily."},
     "brave": {"label": "Brave Search", "needs_key": True, "free": True, "key_url": "https://api-dashboard.search.brave.com",
@@ -225,7 +227,15 @@ def _searxng(query: str, n: int, cfg: dict) -> list[dict]:
             for x in r.json().get("results", [])[:n]]
 
 
-ENGINES = {"duckduckgo": _ddg, "brave": _brave, "tavily": _tavily, "searxng": _searxng}
+def _freellmapi(query: str, n: int, cfg: dict) -> list[dict]:
+    from . import freellm
+    try:
+        return freellm.search(query, n)
+    except freellm.FreeLLMError as exc:
+        raise WebError(str(exc)) from exc
+
+
+ENGINES = {"freellmapi": _freellmapi, "duckduckgo": _ddg, "brave": _brave, "tavily": _tavily, "searxng": _searxng}
 
 
 def search(query: str, n: int = 6) -> list[dict]:

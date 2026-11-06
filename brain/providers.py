@@ -70,8 +70,9 @@ PRESETS = {
         "kind": "openai",
         "base_url": "http://127.0.0.1:3001/v1",
         "model": "auto",
+        "embed_model": "auto",
         "free": True,
-        "key_url": "https://betterstack.com/community/guides/ai/freellmapi/",
+        "key_url": "https://github.com/tashfeenahmed/freellmapi",
         "note": "Self-hosted gateway that pools free tiers from many providers. Run it on your laptop, "
                 "paste its unified key from its dashboard, and keep the model as 'auto'.",
     },

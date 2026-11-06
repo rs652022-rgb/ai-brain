@@ -89,6 +89,9 @@ const SHEETS = {
   identity: ["Identity", "Your values, style and decision rules. This is who it is."],
   import: ["Import", "Bring in your own messages from WhatsApp."],
   activity: ["Activity", "Every action, in order. This log can't be edited."],
+  channels: ["Channels", "Talk to your Brain from Telegram, Discord, Slack and email. Only people you approve can."],
+  automations: ["Automations", "Jobs that run on a schedule, a heartbeat that checks in, and webhooks from other apps."],
+  skills: ["Skills & tools", "Know-how it follows, tools it may use, and what it noticed while dreaming."],
   control: ["Device control", "Let it use your computer and phone. You decide what it may do, and you can stop it anytime."],
   settings: ["Settings", "AI models, web search and voice."],
   master: ["Master Control", "Your account, name, commands, switches, look and security. Only you change these."],
@@ -135,10 +138,19 @@ function setMode(m) {
 }
 $$("#mode button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
+const IMG_RE = /\n*\[Image: (\/api\/media\/[0-9a-f]{16}\.(?:png|jpg))\]/g;
+
+function mediaBox(urls) {
+  return el("div", { class: "media" }, ...urls.map((u) => el("a", { href: u, target: "_blank", rel: "noopener" },
+    el("img", { src: u, alt: "Image made by your Brain", loading: "lazy" }))));
+}
+
 function addMsg(role, text, extra) {
   const box = $("#messages");
   box.querySelector(".empty")?.remove();
-  const m = el("div", { class: `msg ${role}` }, text);
+  const imgs = [...String(text).matchAll(IMG_RE)].map((x) => x[1]);
+  const m = el("div", { class: `msg ${role}` }, String(text).replace(IMG_RE, "").trim());
+  if (imgs.length) m.append(mediaBox(imgs));
   if (extra) m.append(extra);
   box.append(m);
   box.scrollTop = box.scrollHeight;
@@ -173,12 +185,26 @@ function svgMic() {
   return s;
 }
 
+let chatSeen = 0;          // id of the newest message shown
+
 async function loadChat() {
   const hist = await api("/api/chat/history");
+  chatSeen = hist.length ? hist[hist.length - 1].id : 0;
   if (!hist.length) return emptyChat();
   $("#messages").replaceChildren();
   hist.forEach((m) => addMsg(m.role, m.content));
 }
+
+// Messages the Brain sends by itself (scheduled jobs, heartbeat, replies on Telegram…) appear here too.
+async function refreshChat() {
+  if ($("#send").disabled || !$("#auth").hidden || !$("#lock").hidden) return;     // not while answering
+  try {
+    const hist = await api("/api/chat/history?limit=1");
+    if (hist.length && hist[hist.length - 1].id !== chatSeen) loadChat();
+  } catch {}
+}
+loaders.chat = refreshChat;
+setInterval(() => { if (currentTab === "chat") refreshChat(); }, 30000);
 
 function forgetPicker(f) {
   const rows = [
@@ -209,6 +235,7 @@ function forgetPicker(f) {
 
 function replyExtras(r) {
   const extra = el("div", {});
+  if (r.media?.length) extra.append(mediaBox(r.media.map((x) => x.url)));
   if (r.forget) extra.append(forgetPicker(r.forget));
   if (r.task) extra.append(taskView(r.task.id, { spoken: r.spoken }));
   if (r.web_sources?.length) {
@@ -274,6 +301,7 @@ async function sendChat(e, opts = {}) {
           opts.onText?.(ev.text);
         } else if (ev.type === "status") {
           if (!reply) bubble.textContent = ev.text;
+          else { bubble.querySelector(".tool-note")?.remove(); bubble.append(el("span", { class: "tool-note" }, ev.text)); }
         } else if (ev.type === "final") {
           result = ev.result;
         } else if (ev.type === "error") {
@@ -285,6 +313,7 @@ async function sendChat(e, opts = {}) {
     bubble.classList.remove("thinking");
     bubble.textContent = result.reply;
     bubble.append(replyExtras({ ...result, spoken: !!opts.spoken }));
+    if (result.clear) { emptyChat(); addMsg("assistant", result.reply); }
     if (result.action === "mode" && result.new_mode) setMode(result.new_mode);
     if ("resting" in result) { window.BRAND.resting = result.resting; loadStatus(); }
     setTimeout(loadStatus, 4000); // pick up proposed memories
@@ -296,7 +325,10 @@ async function sendChat(e, opts = {}) {
     bubble.classList.add("error");
     if (details) bubble.append(el("details", {}, el("summary", {}, "Technical details"), el("div", {}, details)));
     return { reply: reply || `Sorry, ${err.message}`, error: true };
-  } finally { $("#send").disabled = false; if (!opts.spoken) input.focus(); }
+  } finally {
+    $("#send").disabled = false; if (!opts.spoken) input.focus();
+    api("/api/chat/history?limit=1").then((h) => { if (h.length) chatSeen = h[h.length - 1].id; }).catch(() => {});
+  }
 }
 let webNext = false;
 function setWebNext(on) { webNext = on; $("#web-toggle").classList.toggle("on", on); }
@@ -806,4 +838,20 @@ $("#m-export").addEventListener("click", async () => {
   const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "brain-backup.json";
   Object.assign(document.createElement("a"), { href: url, download: name }).click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
+
+// ---------- FreeLLMAPI quick setup ----------
+$("#fl-go").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  note("#fl-note", "Checking FreeLLMAPI…");
+  try {
+    const r = await api("/api/settings/freellmapi", { method: "POST", body: {
+      base_url: $("#fl-url").value.trim() || "http://127.0.0.1:3001/v1", api_key: $("#fl-key").value.trim(),
+      model: $("#fl-profile").value } });
+    note("#fl-note", `Connected. ${r.models.length} models ready. FreeLLMAPI is now first for chat, search and search-by-meaning.`);
+    $("#fl-key").value = "";
+    loadSettings?.();
+    loadStatus();
+  } catch (err) { note("#fl-note", err.message, true); }
+  e.target.disabled = false;
 });

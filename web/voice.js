@@ -88,7 +88,7 @@ class Speaker {
   constructor() {
     this.buf = ""; this.queue = []; this.cancelled = false; this.ended = false;
     // After a failure, use the browser voice for 2 minutes instead of waiting on the server again.
-    this.server = (V.cfg.tts === "edge" || V.cfg.tts === "piper") && Date.now() - (V.serverVoiceDown || 0) > 120000;
+    this.server = (V.cfg.tts === "edge" || V.cfg.tts === "piper" || V.cfg.tts === "freellmapi") && Date.now() - (V.serverVoiceDown || 0) > 120000;
     this.done = new Promise((r) => (this._resolve = r));
     this.running = false;
   }

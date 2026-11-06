@@ -132,6 +132,11 @@ _rejected: set[tuple[str, str]] = set()   # (provider:model, option) the provide
 def reasoning_options(pid: str, model: str) -> list[dict]:
     """Extra request fields to try, best first. The last option is always 'send nothing extra'."""
     m = model.lower()
+    think = settings.load().get("thinking", "fast")          # /think off|low|high (fast = the old default)
+    if think in ("low", "high") and pid != "anthropic":
+        opts = [{"reasoning_effort": think}]
+        key = f"{pid}:{model}"
+        return [o for o in opts if (key, json.dumps(o, sort_keys=True)) not in _rejected] + [{}]
     if pid == "gemini" or m.startswith("gemini"):
         opts = [{"reasoning_effort": "none"}, {"reasoning_effort": "low"}]
     elif "gpt-oss" in m:
@@ -534,6 +539,8 @@ def _embed_provider_id(data: dict | None = None) -> str:
     for pid in ("gemini", "openai"):
         if data.get("providers", {}).get(pid, {}).get("api_key"):
             return pid
+    if settings.resolved("freellmapi", data)["api_key"]:      # FreeLLMAPI pools free embedding providers too
+        return "freellmapi"
     return "none"
 
 

@@ -3,6 +3,9 @@
 #   docker compose up -d                       Brain only, on http://127.0.0.1:8765 of this machine
 #   docker compose --profile https up -d       + Caddy: free automatic HTTPS for your domain (BRAIN_DOMAIN)
 #   docker compose --profile tunnel up -d      + Cloudflare Tunnel: HTTPS from anywhere, no open ports
+#   --profile freellmapi                       + FreeLLMAPI: one shared free-model gateway for every user
+#                                              (dashboard on http://127.0.0.1:3001 of this machine; then set
+#                                              BRAIN_FREELLMAPI_URL=http://freellmapi:3001/v1 and its key)
 #
 # Settings go in a file called .env.server next to this file (see DEPLOY.md).
 services:
@@ -34,5 +37,18 @@ services:
     env_file: { path: .env.server, required: false }
     command: tunnel --no-autoupdate run          # reads TUNNEL_TOKEN from .env.server
 
+  freellmapi:
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    profiles: ["freellmapi"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+    ports:
+      - "127.0.0.1:3001:3001"       # its dashboard: open through an SSH tunnel, never to the internet
+    volumes:
+      - freellmapi-data:/app/server/data
+
 volumes:
   caddy-data:
+  freellmapi-data:

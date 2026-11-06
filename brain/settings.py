@@ -23,7 +23,9 @@ def _default() -> dict:
             providers[pid] = {"api_key": key}
     if os.environ.get("CLAUDE_MODEL") and "anthropic" in providers:
         providers["anthropic"]["model"] = os.environ["CLAUDE_MODEL"]
-    order = [p for p in ("anthropic", "gemini", "groq", "openrouter") if p in providers]
+    if os.environ.get("BRAIN_FREELLMAPI_URL") and os.environ.get("BRAIN_FREELLMAPI_KEY"):
+        providers.setdefault("freellmapi", {})        # the admin's shared gateway: ready from the first message
+    order = [p for p in ("freellmapi", "anthropic", "gemini", "groq", "openrouter") if p in providers]
     if config.allow_private():      # a local Ollama only makes sense on your own computer (or for the admin)
         order.append("ollama")
     providers.setdefault("ollama", {"base_url": config.OLLAMA_URL, "model": config.OLLAMA_CHAT_MODEL})
@@ -37,6 +39,8 @@ def _default() -> dict:
         "search_order": ["duckduckgo"], # web search engines, tried in order
         "search": {},                   # per engine: api_key, base_url
         "voice": {},                    # see voice.DEFAULTS
+        "thinking": "fast",             # fast | low | high  (/think)
+        "tools_off": [],                # agent tools switched off by the owner
     }
 
 
@@ -66,9 +70,11 @@ def save(data: dict) -> dict:
         "cloud_private_tasks": bool(data.get("cloud_private_tasks", False)),
         "web_mode": data.get("web_mode", "ask") if data.get("web_mode") in ("off", "ask", "auto") else "ask",
         "suggest_facts": bool(data.get("suggest_facts", True)),
-        "search_order": [e for e in data.get("search_order", ["duckduckgo"]) if e in ("duckduckgo", "brave", "tavily", "searxng")],
+        "search_order": [e for e in data.get("search_order", ["duckduckgo"]) if e in ("freellmapi", "duckduckgo", "brave", "tavily", "searxng")],
         "search": {},
         "voice": {},
+        "thinking": data.get("thinking") if data.get("thinking") in ("fast", "low", "high") else "fast",
+        "tools_off": [str(t) for t in (data.get("tools_off") or []) if isinstance(t, str)][:20],
     }
     from .voice import DEFAULTS as VOICE_DEFAULTS
     for k, v in (data.get("voice") or {}).items():
@@ -91,7 +97,7 @@ def save(data: dict) -> dict:
         on_disk = json.loads(path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         on_disk = {}
-    for key in ("master", "control"):
+    for key in ("master", "control", "channels"):
         clean[key] = data[key] if isinstance(data.get(key), dict) else on_disk.get(key, {})
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")
@@ -103,7 +109,7 @@ def resolved(pid: str, data: dict | None = None) -> dict:
     data = data or load()
     p = PRESETS.get(pid, PRESETS["custom"])
     mine = data.get("providers", {}).get(pid, {})
-    return {
+    return _apply_shared({
         "id": pid,
         "label": p["label"],
         "kind": p["kind"],
@@ -114,14 +120,26 @@ def resolved(pid: str, data: dict | None = None) -> dict:
         "embed_model": mine.get("embed_model") or p.get("embed_model", ""),
         "api_key": mine.get("api_key", ""),
         "needs_key": p.get("needs_key", True),
+        "shared": False,
         "fallbacks": mine.get("fallbacks", []),
-    }
+    })
+
+
+def _apply_shared(out: dict) -> dict:
+    """The admin's shared FreeLLMAPI (BRAIN_FREELLMAPI_URL/KEY) for users without their own key."""
+    url, key = os.environ.get("BRAIN_FREELLMAPI_URL", "").rstrip("/"), os.environ.get("BRAIN_FREELLMAPI_KEY", "")
+    if out["id"] == "freellmapi" and url and key and not out["api_key"]:
+        out.update(base_url=url, api_key=key, shared=True)
+    return out
 
 
 def url_allowed(url: str) -> bool:
     """On a shared server, users' own provider and search addresses must be public internet addresses,
     so nobody can make the server call into its own private network."""
     if not url or config.allow_private():
+        return True
+    shared_url = os.environ.get("BRAIN_FREELLMAPI_URL", "").rstrip("/")
+    if shared_url and url.rstrip("/") == shared_url:      # set up by the admin for everyone
         return True
     from . import web
     try:
@@ -136,6 +154,7 @@ def masked(data: dict | None = None) -> dict:
     data = json.loads(json.dumps(data or load()))
     data.pop("master", None)   # PIN hash and Master Control are served separately
     data.pop("control", None)
+    data.pop("channels", None)       # bot tokens are served (masked) by the Channels tab
     for cfg in list(data["providers"].values()) + list(data.get("search", {}).values()):
         k = cfg.get("api_key", "")
         if k:

@@ -26,12 +26,13 @@ DEFAULTS = {
     "stop_words": ["stop", "ruko", "bas", "be quiet"],
     "resting": False,                        # resting: no answers, no background work, until woken
     "features": {"web": True, "learning": True, "voice": True, "suggest_facts": True},
+    "timezone": "",                          # IANA name, e.g. Asia/Kolkata (set from the browser)
     "lock_app": False,                       # require the PIN to open the app at all
     "pin_hash": "",
     "pin_salt": "",
 }
 PUBLIC_KEYS = ("brain_name", "owner_name", "greeting", "subtitle", "suggestions", "default_mode", "theme",
-               "accent", "wake_words", "sleep_words", "stop_words", "resting", "features", "lock_app")
+               "accent", "wake_words", "sleep_words", "stop_words", "resting", "features", "lock_app", "timezone")
 THEMES = ("blueprint", "midnight")
 MODES = ("mirror", "assistant", "coach")
 
@@ -97,6 +98,13 @@ def update(changes: dict) -> dict:
             m["lock_app"] = bool(changes["lock_app"]) and bool(m["pin_hash"])   # can't lock without a PIN
         if "resting" in changes:
             m["resting"] = bool(changes["resting"])
+        if "timezone" in changes:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(str(changes["timezone"]))
+                m["timezone"] = str(changes["timezone"])[:64]
+            except Exception:
+                pass
         data["master"] = m
         settings.save(data)
     return public()

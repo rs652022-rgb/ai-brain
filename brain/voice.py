@@ -25,8 +25,9 @@ from . import config, settings
 log = logging.getLogger("brain.voice")
 
 DEFAULTS = {
-    "stt": "browser",             # browser | local | groq
-    "tts": "edge",                # edge | browser | piper | off
+    "stt": "browser",             # browser | local | groq | freellmapi
+    "tts": "edge",                # edge | browser | piper | freellmapi | off
+    "freellmapi_voice": "alloy",
     "edge_voice": "en-IN-PrabhatNeural",
     "language": "en",             # en | hi | auto  (Hinglish works with en or auto)
     "whisper_model": "base",      # tiny | base | small | medium  (bigger = better and slower)
@@ -156,6 +157,12 @@ def transcribe(audio: bytes, filename: str = "speech.webm", engine: str | None =
         return _local_whisper(audio, language)
     if engine == "groq":
         return _groq_whisper(audio, filename, language)
+    if engine == "freellmapi":
+        from . import freellm
+        try:
+            return freellm.transcribe(audio, filename, language)
+        except freellm.FreeLLMError as exc:
+            raise VoiceError(str(exc)) from exc
     raise VoiceError("Browser listening happens in the page, not on the server.")
 
 
@@ -220,7 +227,13 @@ def speak(text: str) -> tuple[bytes, str]:
     text = clean_for_speech(text)[:4000]
     if not text:
         raise VoiceError("Nothing to say.")
-    if cfg()["tts"] == "edge" or not config.allow_private():   # Piper runs on your own computer only
+    if cfg()["tts"] == "freellmapi":
+        from . import freellm
+        try:
+            return freellm.speech(text, cfg().get("freellmapi_voice", "alloy"))
+        except freellm.FreeLLMError:
+            pass                                                   # fall back to the free Microsoft voice
+    if cfg()["tts"] in ("edge", "freellmapi") or not config.allow_private():   # Piper runs on your own computer only
         return _edge(text), "audio/mpeg"
     return _piper_wav(text), "audio/wav"
 

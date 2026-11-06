@@ -34,6 +34,9 @@
     <button data-tab="identity">Identity</button>
     <button data-tab="import">Import</button>
     <button data-tab="activity">Activity</button>
+    <button data-tab="channels">Channels</button>
+    <button data-tab="automations">Automations</button>
+    <button data-tab="skills">Skills</button>
     <button data-tab="control">Control</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="master">Master</button>
@@ -275,7 +278,23 @@
   <section id="tab-settings" class="tab">
     <div class="card">
       <h2>AI models</h2>
-      <p class="hint">Add a key for any provider. Free options are marked. The Brain tries providers from top to bottom: if one hits a free-tier limit or fails, the next one answers automatically.</p>
+      <div class="fl-box">
+        <div><strong>FreeLLMAPI: one free key, many free models</strong>
+        <p class="hint">Run <a href="https://github.com/tashfeenahmed/freellmapi" target="_blank" rel="noopener">FreeLLMAPI</a> (free, open source), add your free Gemini, Groq, Cerebras, Mistral, OpenRouter… keys in its dashboard, then paste its address and unified key here. Your Brain then uses it for chat, seeing screenshots, search-by-meaning, web search, images and voice, and switches provider by itself when one hits a limit.</p></div>
+        <div class="row">
+          <input id="fl-url" placeholder="http://127.0.0.1:3001/v1" aria-label="FreeLLMAPI address">
+          <input id="fl-key" type="password" placeholder="freellmapi-… unified key" aria-label="FreeLLMAPI key">
+          <select id="fl-profile" aria-label="Routing" style="flex:0 0 220px">
+            <option value="auto">auto: best available</option>
+            <option value="auto:fast">auto:fast: fastest</option>
+            <option value="auto:smart">auto:smart: smartest</option>
+            <option value="fusion">fusion: several models combined (slow)</option>
+          </select>
+          <button class="primary" id="fl-go">Use FreeLLMAPI</button>
+        </div>
+        <p class="note" id="fl-note"></p>
+      </div>
+      <p class="hint">Or add a key for any provider. Free options are marked. The Brain tries providers from top to bottom: if one hits a free-tier limit or fails, the next one answers automatically.</p>
       <div class="row" style="margin:0 0 12px">
         <button class="primary" id="discover-all">Auto-find free models</button>
         <span class="hint" style="margin:0">Checks every provider with a key, tests its free models, and picks the best working ones with backups.</span>
@@ -296,12 +315,14 @@
             <option value="browser">Browser (Chrome/Edge): free, instant. Audio goes to Google/Microsoft</option>
             <option value="local">Local Whisper: free and private, on your laptop</option>
             <option value="groq">Groq Whisper: free tier, very fast and accurate (uses your Groq key)</option>
+            <option value="freellmapi">FreeLLMAPI: free, through your FreeLLMAPI gateway</option>
           </select></label>
         <label>Speaking (text to speech)
           <select id="v-tts">
             <option value="edge">Natural voice (Microsoft neural): free, very human. Needs internet</option>
             <option value="browser">Browser voice: free, offline, instant, more robotic</option>
             <option value="piper">Piper: free and private, on your laptop</option>
+            <option value="freellmapi">FreeLLMAPI voices: through your FreeLLMAPI gateway</option>
             <option value="off">Don't speak</option>
           </select></label>
         <label>Language
@@ -374,6 +395,140 @@
   </section>
 
   <!-- MASTER CONTROL -->
+  <section id="tab-channels" class="tab">
+    <div class="card">
+      <h2>Waiting for your approval</h2>
+      <p class="hint">When someone messages your bot for the first time they get a pairing code. Approve only your own accounts: an approved person talks to the Brain as you.</p>
+      <div id="ch-pending" class="list"></div>
+      <div class="row"><input id="ch-code" placeholder="Pairing code, e.g. ABCD-EF23" aria-label="Pairing code" style="max-width:260px"><button class="primary" id="ch-approve">Approve code</button></div>
+      <p class="note" id="ch-note"></p>
+    </div>
+
+    <div class="card ch-card" data-ch="telegram">
+      <h2>Telegram <span class="ch-state" id="st-telegram"></span></h2>
+      <ol class="steps"><li>In Telegram, open <strong>@BotFather</strong>, send <code>/newbot</code>, pick a name, and copy the token.</li><li>Paste it here, switch it on and save. Then message your new bot: it replies with a pairing code to approve above.</li></ol>
+      <div class="mgrid"><label class="field">Bot token<input type="password" data-k="token" placeholder="123456:ABC…"></label></div>
+      <div class="switches"><label class="switch"><span>Telegram on<small>Voice notes work too: it transcribes them.</small></span><input type="checkbox" data-k="enabled"></label></div>
+    </div>
+
+    <div class="card ch-card" data-ch="discord">
+      <h2>Discord <span class="ch-state" id="st-discord"></span></h2>
+      <ol class="steps"><li>At discord.com/developers → New Application → Bot: copy the token and switch on <strong>Message Content Intent</strong>.</li><li>Invite the bot to a server (OAuth2 → URL generator → bot), or just DM it. In servers it answers when mentioned.</li></ol>
+      <div class="mgrid"><label class="field">Bot token<input type="password" data-k="token"></label></div>
+      <div class="switches"><label class="switch"><span>Discord on</span><input type="checkbox" data-k="enabled"></label></div>
+    </div>
+
+    <div class="card ch-card" data-ch="slack">
+      <h2>Slack <span class="ch-state" id="st-slack"></span></h2>
+      <ol class="steps"><li>At api.slack.com/apps → Create app → turn on <strong>Socket Mode</strong> (make an app token with <code>connections:write</code>).</li><li>Add bot scopes <code>chat:write</code>, <code>im:history</code>, <code>app_mentions:read</code>, subscribe to <code>message.im</code> and <code>app_mention</code> events, install it, and copy the bot token.</li></ol>
+      <div class="mgrid"><label class="field">Bot token (xoxb-…)<input type="password" data-k="bot_token"></label><label class="field">App token (xapp-…)<input type="password" data-k="app_token"></label></div>
+      <div class="switches"><label class="switch"><span>Slack on</span><input type="checkbox" data-k="enabled"></label></div>
+    </div>
+
+    <div class="card ch-card" data-ch="email">
+      <h2>Email <span class="ch-state" id="st-email"></span></h2>
+      <p class="hint">Use a separate mailbox for your Brain (for Gmail: turn on 2-step verification and make an app password). It checks every minute and answers only addresses you add below.</p>
+      <div class="mgrid">
+        <label class="field">Brain's email address<input data-k="address" placeholder="mybrain@gmail.com"></label>
+        <label class="field">App password<input type="password" data-k="password"></label>
+        <label class="field">IMAP server<input data-k="imap_host" placeholder="imap.gmail.com"></label>
+        <label class="field">IMAP port<input data-k="imap_port" placeholder="993"></label>
+        <label class="field">SMTP server<input data-k="smtp_host" placeholder="smtp.gmail.com"></label>
+        <label class="field">SMTP port<input data-k="smtp_port" placeholder="587"></label>
+      </div>
+      <div class="switches"><label class="switch"><span>Email on</span><input type="checkbox" data-k="enabled"></label></div>
+      <div class="row"><input id="ch-email-add" placeholder="your.own@email.com" aria-label="Allowed email"><button id="ch-email-allow">Allow this address</button></div>
+    </div>
+
+    <div class="row"><button class="primary" id="ch-save">Save channels</button></div>
+    <p class="note" id="ch-save-note"></p>
+
+    <div class="card" style="margin-top:22px">
+      <h2>Approved people</h2>
+      <p class="hint">Direct messages share your main conversation, so you can carry on from any app. The Brain can message you on your own linked apps (for reminders and scheduled jobs).</p>
+      <div id="ch-allowed" class="list"></div>
+    </div>
+  </section>
+
+  <section id="tab-automations" class="tab">
+    <div class="card">
+      <h2>Schedule a job</h2>
+      <p class="hint">Or just ask in chat: "every morning at 8 send me my plan on Telegram". Each run is a normal Brain turn with its tools, delivered where you choose.</p>
+      <div class="mgrid">
+        <label class="field">Name<input id="au-name" placeholder="Morning plan"></label>
+        <label class="field">When<input id="au-when" placeholder="daily at 08:00 · weekdays at 6pm · every 2 hours · once 2026-12-01 09:00 · cron 0 9 * * 1"></label>
+        <label class="field">Send the answer to<select id="au-deliver"></select></label>
+      </div>
+      <label class="field">What to do each time<textarea id="au-prompt" rows="3" placeholder="Look at my memories and journal and give me today's top 3 priorities."></textarea></label>
+      <div class="row"><button class="primary" id="au-add">Schedule</button></div>
+      <p class="note" id="au-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Heartbeat</h2>
+      <p class="hint">Every so often it goes through your checklist and only messages you when something needs attention. Otherwise it stays quiet.</p>
+      <div class="switches"><label class="switch"><span>Heartbeat on</span><input type="checkbox" id="hb-on"></label></div>
+      <div class="mgrid">
+        <label class="field">Every (minutes)<input id="hb-min" type="number" min="15" max="1440" value="60"></label>
+        <label class="field">Send to<select id="hb-deliver"></select></label>
+      </div>
+      <label class="field">Checklist<textarea id="hb-list" rows="4"></textarea></label>
+      <div class="row"><button id="hb-save">Save heartbeat</button></div>
+      <p class="note" id="hb-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Webhooks</h2>
+      <p class="hint">Let other apps (a website form, Zapier, n8n, GitHub…) trigger your Brain. They send JSON to a secret address; the Brain treats it as information, never as instructions.</p>
+      <div class="mgrid">
+        <label class="field">Name<input id="wh-name" placeholder="New website lead"></label>
+        <label class="field">Send to<select id="wh-deliver"></select></label>
+      </div>
+      <label class="field">What to do with it<textarea id="wh-prompt" rows="2" placeholder="Summarise this lead and draft a friendly reply I can send."></textarea></label>
+      <div class="row"><button id="wh-add">Create webhook</button></div>
+      <div id="wh-out" class="pair-out" hidden></div>
+      <p class="note" id="wh-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Your jobs</h2>
+      <div id="au-list" class="list"></div>
+    </div>
+  </section>
+
+  <section id="tab-skills" class="tab">
+    <div class="card">
+      <h2>Skills</h2>
+      <p class="hint">A skill is written know-how for a kind of task: "how I write client proposals", "how to follow up on an invoice". The Brain loads it when a task matches. It also suggests skills from tasks it finished; suggestions do nothing until you switch them on.</p>
+      <div id="sk-list" class="list"></div>
+      <h3 style="margin-top:20px">New skill</h3>
+      <div class="mgrid">
+        <label class="field">Name<input id="sk-name" placeholder="client-proposal"></label>
+        <label class="field">When to use it<input id="sk-desc" placeholder="Writing a web-development proposal for a client"></label>
+      </div>
+      <label class="field">Instructions<textarea id="sk-body" rows="6" placeholder="1. Ask for the budget, deadline and the 3 must-have pages.&#10;2. Use my standard packages: Starter ₹25k, Business ₹60k…"></textarea></label>
+      <div class="row"><button class="primary" id="sk-save">Save skill</button></div>
+      <p class="note" id="sk-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Tools it may use</h2>
+      <p class="hint">While answering, the Brain can use these. Switch off any you don't want. Web tools follow your web setting; device and message tools follow their own switches.</p>
+      <div id="tl-list" class="switches"></div>
+      <label class="field" style="max-width:320px">Thinking<select id="tl-think"><option value="fast">Fast answers</option><option value="low">Think a little</option><option value="high">Think hard (slower)</option></select></label>
+      <div class="row"><button id="tl-save">Save tools</button></div>
+      <p class="note" id="tl-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Dream diary</h2>
+      <p class="hint">Each night it looks back over the day, writes a short diary entry, and suggests facts to remember (in Memories, for your approval).</p>
+      <div class="row"><button id="dr-run">Dream about today now</button></div>
+      <p class="note" id="dr-note"></p>
+      <div id="dr-list" class="list"></div>
+    </div>
+  </section>
+
   <section id="tab-control" class="tab">
     <div class="card" id="c-gate" hidden>
       <h2>Unlock to change device control</h2>
@@ -610,6 +765,7 @@
 <script src="/static/app.js"></script>
 <script src="/static/control.js"></script>
 <script src="/static/account.js"></script>
+<script src="/static/agentui.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>

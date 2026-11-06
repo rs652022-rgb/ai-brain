@@ -67,6 +67,60 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation, id);
+
+-- Earlier parts of long conversations, summarised (compaction)
+CREATE TABLE IF NOT EXISTS summaries (
+    conversation TEXT PRIMARY KEY,
+    upto INTEGER NOT NULL,            -- messages up to this id are summarised
+    text TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Dreaming: a nightly look back over the day
+CREATE TABLE IF NOT EXISTS dreams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL UNIQUE,
+    diary TEXT NOT NULL,
+    suggested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- Automations: scheduled jobs, heartbeat and webhooks, and their runs
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'schedule',   -- schedule | heartbeat | webhook
+    schedule TEXT NOT NULL DEFAULT '',
+    tz TEXT NOT NULL DEFAULT '',
+    deliver TEXT NOT NULL DEFAULT 'web',
+    token TEXT,                               -- webhook secret (hash)
+    enabled INTEGER NOT NULL DEFAULT 1,
+    next_run TEXT,
+    last_run TEXT,
+    last_result TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output TEXT NOT NULL DEFAULT ''
+);
+
+-- Channels: who may talk to the Brain on Telegram, Discord, Slack and email
+CREATE TABLE IF NOT EXISTS channel_senders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    sender TEXT NOT NULL,                     -- the app's user id or email address
+    name TEXT NOT NULL DEFAULT '',
+    chat TEXT NOT NULL DEFAULT '',            -- where to send the owner messages (DM chat id)
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending | allowed | blocked
+    code TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(channel, sender)
+);
 """
 
 

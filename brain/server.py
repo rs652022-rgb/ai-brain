@@ -1,5 +1,6 @@
 """Local web server. Binds to 127.0.0.1 only, so nothing outside your laptop can reach it."""
 import logging
+import re
 from contextlib import asynccontextmanager
 
 import yaml
@@ -48,6 +49,20 @@ def _start_scheduler():
                     config.reset_dir(tok)
                     config._user_role.reset(role)
 
+    def fast_loop():
+        from . import automations, channels, dreaming
+        time.sleep(3)
+        for_each_brain(channels.restart, "Starting channels")
+        ticks = 0
+        while True:
+            for_each_brain(automations.run_due, "Scheduled jobs")
+            if ticks % 120 == 0:                       # about once an hour
+                for_each_brain(dreaming.nightly, "Dreaming")
+            ticks += 1
+            time.sleep(30)
+
+    threading.Thread(target=fast_loop, daemon=True).start()
+
     def loop():
         time.sleep(5)
         if not config.MULTIUSER:
@@ -84,7 +99,7 @@ OPEN_PATHS = ("/api/master/public", "/api/master/unlock", "/api/master/lock")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
 AUTH_COOKIE = "brain_auth"
 # Reachable without logging in (on a server with accounts)
-PUBLIC_API = ("/api/auth/", "/api/health", "/api/companion/pair", "/api/companion/ws")
+PUBLIC_API = ("/api/auth/", "/api/health", "/api/companion/pair", "/api/companion/ws", "/api/hooks/")
 MAX_BODY = 30 * 1024 * 1024
 
 
@@ -205,6 +220,8 @@ def settings_put(body: SettingsIn, request: Request):
             key = cfg.get("api_key", "")
             if key.startswith("••••"):  # unchanged masked key: keep the stored one
                 cfg["api_key"] = current.get(group, {}).get(pid, {}).get("api_key", "")
+    for k in ("thinking", "tools_off"):             # set elsewhere (/think, the Agent card): keep them
+        data.setdefault(k, current.get(k))
     saved = settings.save(data)
     db.audit("owner", "settings.save", order=saved["order"], embeddings=saved["embeddings"],
              cloud_private_tasks=saved["cloud_private_tasks"])
@@ -229,6 +246,28 @@ def settings_models(pid: str):
         return {"models": llm.list_models(pid)}
     except llm.ProviderError as exc:
         _err(exc, 502)
+
+
+class FreeLLMIn(BaseModel):
+    base_url: str = ""
+    api_key: str
+    model: str = "auto"
+
+
+@app.post("/api/settings/freellmapi")
+def settings_freellmapi(body: FreeLLMIn, request: Request):
+    _need_master(request)
+    from . import freellm
+    try:
+        out = freellm.quick_setup(body.base_url, body.api_key)
+    except freellm.FreeLLMError as exc:
+        _err(exc)
+    if body.model in freellm.PROFILES:
+        data = settings.load()
+        data["providers"]["freellmapi"]["model"] = body.model
+        settings.save(data)
+    db.audit("owner", "settings.freellmapi", models=len(out["models"]), profile=body.model)
+    return out
 
 
 @app.post("/api/settings/discover")
@@ -636,8 +675,8 @@ def chat_stream(body: ChatIn):
 
 
 @app.get("/api/chat/history")
-def chat_history():
-    return core.history()
+def chat_history(limit: int = 100):
+    return core.history(limit=max(1, min(500, limit)))
 
 
 @app.delete("/api/chat/history")
@@ -922,6 +961,312 @@ async def companion_ws(ws: WebSocket):
         pass
     finally:
         hub.unregister(key, conn)
+
+
+# ---------- Agent tools, media, conversation search ----------
+
+@app.get("/api/tools")
+def tools_get():
+    from . import tools
+    off = set(settings.load().get("tools_off", []))
+    ctx = {"web_asked": True}
+    return {"tools": [{"name": n, "description": spec[1], "on": n not in off, "ready": spec[3](ctx)}
+                      for n, spec in tools.TOOLS.items()], "thinking": settings.load().get("thinking", "fast")}
+
+
+class ToolsIn(BaseModel):
+    off: list[str] = []
+    thinking: str | None = None
+
+
+@app.put("/api/tools")
+def tools_put(body: ToolsIn, request: Request):
+    _need_master(request)
+    data = settings.load()
+    data["tools_off"] = body.off
+    if body.thinking:
+        data["thinking"] = body.thinking
+    settings.save(data)
+    db.audit("owner", "tools.update", off=body.off, thinking=body.thinking)
+    return tools_get()
+
+
+@app.get("/api/media/{name}")
+def media(name: str):
+    from . import tools
+    if not re.fullmatch(r"[0-9a-f]{16}\.(png|jpg)", name):
+        raise HTTPException(status_code=404, detail="Not found")
+    path = tools.media_dir() / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/chat/search")
+def chat_search(q: str):
+    return core.search_conversations(q, limit=40)
+
+
+# ---------- Channels (Telegram, Discord, Slack, email) ----------
+
+@app.get("/api/channels")
+def channels_get():
+    from . import channels
+    return {"config": channels.public_config(), "status": channels.status(), "senders": channels.senders()}
+
+
+class ChannelsIn(BaseModel):
+    changes: dict
+
+
+@app.put("/api/channels")
+def channels_put(body: ChannelsIn, request: Request):
+    _need_master(request)
+    from . import channels
+    channels.save_config(body.changes)
+    time.sleep(0.3)
+    return channels_get()
+
+
+class ApproveIn(BaseModel):
+    code: str
+    allow: bool = True
+
+
+@app.post("/api/channels/approve")
+def channels_approve(body: ApproveIn, request: Request):
+    _need_master(request)
+    from . import channels
+    try:
+        channels.approve(body.code, body.allow)
+    except ValueError as exc:
+        _err(exc)
+    return channels_get()
+
+
+class AllowIn(BaseModel):
+    channel: str
+    sender: str
+    name: str = ""
+
+
+@app.post("/api/channels/allow")
+def channels_allow(body: AllowIn, request: Request):
+    _need_master(request)
+    from . import channels
+    try:
+        channels.add_allowed(body.channel, body.sender, body.name)
+    except ValueError as exc:
+        _err(exc)
+    return channels_get()
+
+
+@app.delete("/api/channels/senders/{sid}")
+def channels_remove(sid: int, request: Request):
+    _need_master(request)
+    from . import channels
+    channels.remove_sender(sid)
+    return channels_get()
+
+
+@app.post("/api/channels/test/{channel}")
+def channels_test(channel: str):
+    from . import channels
+    try:
+        channels.send_owner(channel, f"👋 Test from {master.brain_name()}. Channels are working.")
+    except Exception as exc:
+        _err(exc)
+    return {"ok": True}
+
+
+# ---------- Automations: scheduled jobs, heartbeat, webhooks ----------
+
+def _auto():
+    from . import automations
+    return automations
+
+
+@app.get("/api/automations")
+def automations_get():
+    a = _auto()
+    return {"jobs": a.list_jobs(), "heartbeat": a.heartbeat(), "default_checklist": a.DEFAULT_CHECKLIST,
+            "deliver": list(a.DELIVER), "timezone": master.get().get("timezone") or ""}
+
+
+class JobIn(BaseModel):
+    name: str = ""
+    prompt: str
+    when: str
+    deliver: str = "web"
+    tz: str = ""
+
+
+@app.post("/api/automations")
+def automations_add(body: JobIn):
+    a = _auto()
+    try:
+        return a.add(body.name, body.prompt, body.when, body.deliver, body.tz)
+    except a.ScheduleError as exc:
+        _err(exc)
+
+
+class JobPatch(BaseModel):
+    changes: dict
+
+
+@app.patch("/api/automations/{jid}")
+def automations_update(jid: int, body: JobPatch):
+    a = _auto()
+    try:
+        return a.update(jid, body.changes)
+    except a.ScheduleError as exc:
+        _err(exc)
+
+
+@app.delete("/api/automations/{jid}")
+def automations_delete(jid: int):
+    _auto().delete(jid)
+    return {"ok": True}
+
+
+@app.post("/api/automations/{jid}/run")
+def automations_run(jid: int):
+    a = _auto()
+    job = a.get(jid)
+    if not job:
+        _err(KeyError("No such job"), 404)
+    return a.run(job, {"test": True} if job["kind"] == "webhook" else None)
+
+
+@app.get("/api/automations/{jid}/runs")
+def automations_runs(jid: int):
+    return _auto().runs(jid)
+
+
+class HeartbeatIn(BaseModel):
+    enabled: bool
+    minutes: int = 60
+    checklist: str = ""
+    deliver: str = "web"
+
+
+@app.post("/api/automations/heartbeat")
+def automations_heartbeat(body: HeartbeatIn):
+    a = _auto()
+    try:
+        return a.set_heartbeat(body.enabled, body.minutes, body.checklist, body.deliver)
+    except a.ScheduleError as exc:
+        _err(exc)
+
+
+class WebhookIn(BaseModel):
+    name: str
+    prompt: str
+    deliver: str = "web"
+
+
+@app.post("/api/automations/webhook")
+def automations_webhook(body: WebhookIn, request: Request):
+    a = _auto()
+    try:
+        job, secret = a.add_webhook(body.name, body.prompt, body.deliver)
+    except a.ScheduleError as exc:
+        _err(exc)
+    return job | {"url": f"{_site(request)}/api/hooks/{secret}"}
+
+
+_hook_hits: dict[str, list[float]] = {}
+
+
+@app.post("/api/hooks/{secret}")
+async def webhook_in(secret: str, request: Request):
+    """Another app triggers a webhook automation. The secret in the address is the password."""
+    now = time.time()
+    hits = [t for t in _hook_hits.get(secret[:12], []) if now - t < 60]
+    if len(hits) >= 20:
+        raise HTTPException(status_code=429, detail="Too many calls")
+    _hook_hits[secret[:12]] = hits + [now]
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"text": (await request.body()).decode("utf-8", "replace")[:8000]}
+    a = _auto()
+    users = accounts.list_users() if config.MULTIUSER else [None]
+    for u in users:                                  # find whose webhook this is
+        if u and u["disabled"]:
+            continue
+        tok = config.use_dir(accounts.prepare(u)) if u else None
+        role = config.set_role(u["role"]) if u else None
+        try:
+            job = a.webhook_for(secret)
+            if job:
+                config.spawn(a.run, job, payload if isinstance(payload, dict) else {"data": payload})
+                return {"ok": True, "accepted": job["name"]}
+        finally:
+            if u:
+                config.reset_dir(tok)
+                config._user_role.reset(role)
+    raise HTTPException(status_code=404, detail="Unknown webhook")
+
+
+# ---------- Skills and dreaming ----------
+
+@app.get("/api/skills")
+def skills_get():
+    from . import skills
+    return skills.list_all()
+
+
+class SkillIn(BaseModel):
+    name: str
+    description: str = ""
+    body: str
+    status: str = "active"
+
+
+@app.post("/api/skills")
+def skills_save(body: SkillIn):
+    from . import skills
+    try:
+        return skills.save(body.name, body.description, body.body, body.status)
+    except ValueError as exc:
+        _err(exc)
+
+
+class SkillStatusIn(BaseModel):
+    status: str
+
+
+@app.patch("/api/skills/{name}")
+def skills_status(name: str, body: SkillStatusIn):
+    from . import skills
+    try:
+        return skills.set_status(name, body.status)
+    except ValueError as exc:
+        _err(exc)
+
+
+@app.delete("/api/skills/{name}")
+def skills_delete(name: str):
+    from . import skills
+    skills.delete(name)
+    return {"ok": True}
+
+
+@app.get("/api/dreams")
+def dreams_get():
+    from . import dreaming
+    return dreaming.dreams()
+
+
+@app.post("/api/dreams/run")
+def dreams_run():
+    from . import dreaming
+    from datetime import datetime as _dt
+    out = dreaming.dream(_dt.now().strftime("%Y-%m-%d"), force=True)
+    if not out:
+        _err(ValueError("Not enough conversation today to dream about yet."))
+    return out
 
 
 # ---------- Device control ----------

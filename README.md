@@ -76,6 +76,48 @@ Open the **Master** tab to change anything about your Brain:
 - **Security:** set a **Master PIN**. Once set, the PIN is needed to change Master Control and Settings (API keys). Turn on **Lock the whole app** to ask for the PIN before showing anything. Only a salted hash of the PIN is stored; after 5 wrong tries it waits a minute. Forgot it? Stop the app and delete the `"master"` section's `pin_hash` from `data/settings.json`.
 - **Data:** download a full backup (memories, journal, chats, learned knowledge, Identity File). API keys and the PIN are left out.
 
+## Agent features (inspired by OpenClaw)
+
+**FreeLLMAPI, one free key for everything.** Run [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) (free, open source) and add your free provider keys in its dashboard. Then in Settings → AI models, paste its address and unified key and click **Use FreeLLMAPI**. Chat, seeing screenshots, search-by-meaning, web search, images and voice then all go through it. It switches provider by itself when one hits its limit. Routing choices:
+- `auto`: best available
+- `auto:fast`: fastest
+- `auto:smart`: smartest available
+- `fusion`: several models answer and one combines them
+
+**Tools while answering.** The Brain can search the web (when you allow it), read a page, look through your memories, suggest a fact (you approve it), make an image, schedule a job, use your devices, message you on your linked apps, and follow your skills. Switch any of them off in Skills → Tools.
+
+**Slash commands:**
+
+| Command | What it does |
+|---|---|
+| `/help` | Lists the commands |
+| `/new` | Starts a fresh chat; the old one is kept |
+| `/status` | Shows models, memory, channels and jobs |
+| `/model auto:fast` | Changes the model |
+| `/think high` | Thinks harder before answering |
+| `/btw …` | Asks a side question that isn't saved |
+| `/compact` | Summarises a long chat |
+| `/search …` | Searches past chats |
+| `/skills`, `/jobs` | Lists your skills and scheduled jobs |
+
+Long chats are summarised automatically, so nothing important is lost.
+
+**Channels (Telegram, Discord, Slack, email).** Talk to your Brain from your phone's chat apps.
+- An unknown person who messages your bot gets a pairing code, and nothing happens until you approve it in **Channels**.
+- Email only answers addresses you add.
+- In group chats it answers only approved people who mention it.
+- Direct messages share your main chat with the web app.
+- Telegram voice notes are transcribed.
+
+**Automations:**
+- **Scheduled jobs** ("weekdays at 8am give me my top 3 priorities"), delivered to the chat, Telegram, Discord, Slack or email.
+- **Heartbeat:** checks your checklist every so often and messages you only when something needs attention.
+- **Webhooks:** let a website form, Zapier or n8n trigger the Brain. Their data is treated as information, never as instructions.
+
+**Skills and self-learning.** Write a skill ("how I write client proposals") in the Skills tab. After multi-step tasks the Brain may suggest a new skill, but a suggestion does nothing until you switch it on.
+
+**Dreaming.** Each night it looks back over the day, writes a short diary entry, and suggests facts to remember. They go to Memories for your approval.
+
 ## Device control (your computer and phone)
 
 Open the **Control** tab. Nothing happens until you **turn it on** and **allow a device**. You allow it once, and it stays allowed until you switch it off.
@@ -211,6 +253,12 @@ brain/
   agent.py         the device task loop: look, decide one step, check permission, act, repeat
   accounts.py      web version: sign-up, login, sessions, admin, companion pairing
   hub.py           web version: live link to each user's Brain Companion app
+  freellm.py       FreeLLMAPI: chat profiles, images, speech, transcription, search, quick setup
+  tools.py         tools the Brain can use while answering
+  channels.py      Telegram, Discord, Slack and email, with pairing
+  automations.py   scheduled jobs, heartbeat, webhooks
+  skills.py        SKILL.md skills and self-learning suggestions
+  dreaming.py      nightly look back over the day
   memory.py        add, tag, search, edit, forget, approval queue, rules
   web.py           web search, safe page reading, PDF/Word reading
   knowledge.py     what it learned: sources, study notes, scheduled topics
