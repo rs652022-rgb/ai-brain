@@ -24,6 +24,12 @@ MAX_TEXT_CHARS = 60_000
 SEARCH_PRESETS = {
     "freellmapi": {"label": "FreeLLMAPI search", "needs_key": False, "free": True, "key_url": "",
                    "note": "Uses your FreeLLMAPI gateway's search engines (set up FreeLLMAPI under AI models)."},
+    "exa": {"label": "Exa", "needs_key": True, "free": True, "key_url": "https://dashboard.exa.ai",
+            "note": "Search by meaning, with page text. Free credits to start."},
+    "perplexity": {"label": "Perplexity Search", "needs_key": True, "free": False, "key_url": "https://www.perplexity.ai/settings/api",
+                   "note": "Ranked web results from Perplexity's index."},
+    "firecrawl": {"label": "Firecrawl", "needs_key": True, "free": True, "key_url": "https://www.firecrawl.dev/app/api-keys",
+                  "note": "Search plus clean page content. Free monthly credits."},
     "duckduckgo": {"label": "DuckDuckGo", "needs_key": False, "free": True, "key_url": "",
                    "note": "No key needed. Can be rate-limited if used heavily."},
     "brave": {"label": "Brave Search", "needs_key": True, "free": True, "key_url": "https://api-dashboard.search.brave.com",
@@ -235,7 +241,34 @@ def _freellmapi(query: str, n: int, cfg: dict) -> list[dict]:
         raise WebError(str(exc)) from exc
 
 
-ENGINES = {"freellmapi": _freellmapi, "duckduckgo": _ddg, "brave": _brave, "tavily": _tavily, "searxng": _searxng}
+def _exa(query: str, n: int, cfg: dict) -> list[dict]:
+    r = httpx.post("https://api.exa.ai/search", headers={"x-api-key": cfg.get("api_key", "")}, timeout=30,
+                   json={"query": query, "numResults": n, "contents": {"text": {"maxCharacters": 500}}})
+    if r.status_code != 200:
+        raise WebError(f"Exa returned HTTP {r.status_code}")
+    return [{"title": x.get("title") or x.get("url", ""), "url": x.get("url", ""), "snippet": (x.get("text") or "")[:400]}
+            for x in r.json().get("results", [])[:n]]
+
+
+def _perplexity(query: str, n: int, cfg: dict) -> list[dict]:
+    r = httpx.post("https://api.perplexity.ai/search", headers={"Authorization": f"Bearer {cfg.get('api_key', '')}"},
+                   json={"query": query, "max_results": n}, timeout=30)
+    if r.status_code != 200:
+        raise WebError(f"Perplexity returned HTTP {r.status_code}")
+    return [{"title": x.get("title", ""), "url": x.get("url", ""), "snippet": (x.get("snippet") or "")[:400]}
+            for x in r.json().get("results", [])[:n]]
+
+
+def _firecrawl(query: str, n: int, cfg: dict) -> list[dict]:
+    r = httpx.post("https://api.firecrawl.dev/v1/search", headers={"Authorization": f"Bearer {cfg.get('api_key', '')}"},
+                   json={"query": query, "limit": n}, timeout=40)
+    if r.status_code != 200:
+        raise WebError(f"Firecrawl returned HTTP {r.status_code}")
+    return [{"title": x.get("title", ""), "url": x.get("url", ""), "snippet": (x.get("description") or "")[:400]}
+            for x in r.json().get("data", [])[:n]]
+
+
+ENGINES = {"exa": _exa, "perplexity": _perplexity, "firecrawl": _firecrawl, "freellmapi": _freellmapi, "duckduckgo": _ddg, "brave": _brave, "tavily": _tavily, "searxng": _searxng}
 
 
 def search(query: str, n: int = 6) -> list[dict]:

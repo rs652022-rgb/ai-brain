@@ -84,6 +84,13 @@ Any Linux machine with Docker works, including a home mini-PC or a VPS. Follow O
   `0 3 * * * tar czf ~/brain-backup-$(date +\%a).tgz -C ~/ai-brain brain-data`
 - **Update:** run `git pull && docker compose --profile https up -d --build`.
 
+## Optional extras on a server
+
+- **Browser agent:** build with Playwright: add `RUN pip install playwright && playwright install --with-deps chromium` to the Dockerfile (about 400 MB more).
+- **Python sandbox:** mount the Docker socket only if you understand the risk. Without Docker, code running is off on shared servers.
+- **Monitoring:** set `BRAIN_METRICS_TOKEN` and scrape `/metrics` with it as a Bearer token.
+- **Android app:** Actions → Build Android app → enter your https address. See `mobile/README.md`.
+
 ## Safety notes
 
 - Passwords are stored only as scrypt hashes, and login sessions as hashes.

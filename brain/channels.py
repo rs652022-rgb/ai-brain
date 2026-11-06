@@ -25,11 +25,11 @@ from email.message import EmailMessage
 
 import httpx
 
-from . import config, db, master, settings
+from . import config, db, master, settings  # noqa: E402
 
 log = logging.getLogger("brain.channels")
 
-CHANNELS = ("telegram", "discord", "slack", "email")
+CHANNELS = ["telegram", "discord", "slack", "email"]     # more are added by channels_more.py
 SECRETS = {"telegram": ("token",), "discord": ("token",), "slack": ("bot_token", "app_token"), "email": ("password",)}
 FIELDS = {
     "telegram": ("enabled", "token"),
@@ -41,6 +41,17 @@ LIMITS = {"telegram": 4000, "discord": 1900, "slack": 3500, "email": 100000}
 
 
 # ---------- Settings ----------
+
+def inbox_secret() -> str:
+    """The secret part of this Brain's webhook addresses (/api/channels/in/<channel>/<secret>)."""
+    data = settings.load()
+    ch = data.get("channels") or {}
+    if not ch.get("_inbox"):
+        ch["_inbox"] = secrets.token_urlsafe(18)
+        data["channels"] = ch
+        settings.save(data)
+    return ch["_inbox"]
+
 
 def get_config() -> dict:
     saved = settings.load().get("channels") or {}
@@ -73,7 +84,7 @@ def save_config(changes: dict) -> dict:
             if k in SECRETS[ch] and not str(v).strip():
                 continue                      # blank secret = keep the saved one
             cur[ch][k] = bool(v) if k == "enabled" else str(v).strip()[:300]
-    data["channels"] = cur
+    data["channels"] = cur | {"_inbox": (data.get("channels") or {}).get("_inbox", "")}
     settings.save(data)
     db.audit("owner", "channels.update", enabled=[c for c in CHANNELS if cur[c]["enabled"]])
     restart()
@@ -190,8 +201,8 @@ def handle(channel: str, sender: str, name: str, chat: str, text: str, is_dm: bo
     if who and who["status"] == "blocked":
         return None
     if not who or who["status"] != "allowed":
-        if not is_dm or channel == "email":
-            return None                       # strangers in groups and unknown email senders: ignore
+        if not is_dm or channel in ("email", "sms"):
+            return None                       # strangers in groups, unknown email/SMS senders: ignore
         code = request_pairing(channel, sender, name, chat)
         if not code:
             return None
@@ -226,8 +237,17 @@ def _media_bytes(m: dict) -> bytes | None:
 
 # ---------- Sending ----------
 
+EXTRA_SENDERS: dict = {}          # channel -> fn(cfg, chat, text, media)
+NEEDS = {"telegram": ["token"], "discord": ["token"], "slack": ["bot_token", "app_token"],
+         "email": ["address", "password", "imap_host", "smtp_host"]}
+WEBHOOK_CHANNELS: set = set()     # channels that receive messages on /api/channels/in/...
+
+
 def send(channel: str, chat: str, text: str, media: list | None = None) -> None:
     cfg = get_config()[channel]
+    if channel in EXTRA_SENDERS:
+        EXTRA_SENDERS[channel](cfg, chat, text, media or [])
+        return
     if channel == "telegram":
         for part in chunks(text, LIMITS[channel]):
             _tg(cfg["token"], "sendMessage", {"chat_id": chat, "text": part})
@@ -534,9 +554,7 @@ class Runner:
 
 
 def _ready(channel: str, c: dict) -> bool:
-    need = {"telegram": ["token"], "discord": ["token"], "slack": ["bot_token", "app_token"],
-            "email": ["address", "password", "imap_host", "smtp_host"]}[channel]
-    return bool(c.get("enabled")) and all(c.get(k) for k in need)
+    return bool(c.get("enabled")) and all(c.get(k) for k in NEEDS.get(channel, []))
 
 
 def restart() -> None:
@@ -553,6 +571,8 @@ def restart() -> None:
                 old.stop.set()
                 _runners.pop(key, None)
                 old = None
+            if want and not old and ch not in RUNNERS:
+                continue                      # webhook channels: nothing to run, messages arrive by HTTP
             if want and not old:
                 run = Runner(ch, dict(cfg[ch]))
                 _runners[key] = run
@@ -572,6 +592,12 @@ def status() -> dict:
     out = {}
     for ch in CHANNELS:
         r = _runners.get((me, ch))
+        if ch in WEBHOOK_CHANNELS and _ready(ch, cfg[ch]):
+            out[ch] = {"state": "running", "detail": "receiving by webhook"}
+            continue
         out[ch] = {"state": r.state if r else ("off" if not cfg[ch]["enabled"] else "incomplete"),
                    "detail": r.detail if r else ""}
     return out
+
+
+from . import channels_more  # noqa: E402,F401  (registers WhatsApp, Signal, Matrix, Mattermost, IRC, Twitch, SMS, LINE)

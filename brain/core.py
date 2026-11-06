@@ -445,12 +445,22 @@ def _reply(message, reply, mode, conversation, **extra):
 
 
 def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, background_extract: bool,
-             web_override: bool | None, voice: bool, channel: str = "") -> dict:
+             web_override: bool | None, voice: bool, channel: str = "", agent_id: str = "",
+             attachments: list | None = None, tools_only: list | None = None) -> dict:
     """Steps 1-3: commands, recall and web lookup. Returns {'done': result} or the context for answering."""
+    from . import agents, attachments as att
     message = message.strip()
+    files = att.load(attachments or [])
+    if not message and files:
+        message = "Look at what I've attached."
     if not message:
         raise ValueError("Message is empty")
     mode = mode if mode in MODES else "mirror"
+    persona = agents.get(agent_id) if agent_id and agent_id != agents.MAIN else (agents.for_channel(channel) if channel else None)
+    if persona:
+        mode = persona["mode"]
+        if conversation == "main":
+            conversation = f"agent:{persona['id']}"
 
     m = master.get()
     if master.matches(message, m["stop_words"]) or message.lower().strip(" .!") in {w.strip(" .!") for w in STOP_WORDS}:
@@ -592,12 +602,17 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
     summ = _summary(conversation)
     if summ:
         system += f"\n\n<earlier_in_this_conversation>\n{summ['text']}\n</earlier_in_this_conversation>"
-    tool_ctx = {"web_asked": bool(want), "channel": channel}
+    tool_ctx = {"web_asked": bool(want), "channel": channel, "tools_off": (persona or {}).get("tools_off", []),
+                "prefer": agents.prefer(persona)}
+    if tools_only is not None:                    # restricted runs (e.g. reading untrusted email)
+        tool_ctx["tools_off"] = [n for n in tools.TOOLS if n not in tools_only]
+    system += agents.prompt_block(persona)
     if not private:
         system += tools.prompt_block(tool_ctx)
+    user_msg = att.user_message(message, files)
     return {"message": message, "mode": mode, "conversation": conversation, "mems": mems, "know": know,
             "web_docs": web_docs, "web_note": web_note, "private": private, "system": system,
-            "history": _history(conversation) + [{"role": "user", "content": message}],
+            "history": _history(conversation) + [user_msg], "files": files, "agent": persona,
             "max_tokens": 350 if voice else 1200, "background_extract": background_extract,
             "tool_ctx": tool_ctx, "btw": btw}
 
@@ -609,7 +624,7 @@ def _finish(ctx: dict, reply: str, model: str) -> dict:
     media = tc.get("media", [])
     saved = reply + "".join(f"\n\n[Image: {m['url']}]" for m in media)
     if not ctx.get("btw"):                       # /btw side questions aren't kept in the chat
-        _save_message(ctx["conversation"], "user", message, mode)
+        _save_message(ctx["conversation"], "user", message + "".join(f"\n[Attached: {f['name']}]" for f in ctx.get("files", [])), mode)
         _save_message(ctx["conversation"], "assistant", saved, mode)
         config.spawn(compact, ctx["conversation"]) if ctx["background_extract"] else None
     used = sorted({int(x) for x in re.findall(r"#(\d+)", reply)} & {m["id"] for m in mems})
@@ -624,7 +639,8 @@ def _finish(ctx: dict, reply: str, model: str) -> dict:
     sources = [{"title": d["title"], "url": d["url"]} for d in web_docs] + tc.get("web_sources", [])
     out = {"reply": reply, "memories_used": mems, "knowledge_used": know, "cited": used, "model": model,
            "web_sources": sources, "action": "chat", "web_note": ctx["web_note"], "media": media,
-           "tools_used": tc.get("tools_used", [])}
+           "tools_used": tc.get("tools_used", []), "agent": (ctx.get("agent") or {}).get("id", "main"),
+           "conversation": ctx["conversation"]}
     if tc.get("task"):
         out["task"] = tc["task"]
     if len(tc.get("tools_used", [])) >= 2 and ctx["background_extract"]:
@@ -649,14 +665,17 @@ def _tool_round(ctx: dict, reply: str) -> bool:
 
 def think(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
           background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
-          channel: str = "") -> dict:
+          channel: str = "", agent_id: str = "", attachments: list | None = None,
+          tools_only: list | None = None) -> dict:
     """One full turn, returned when the whole reply is ready (tools included)."""
-    ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel)
+    ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
+                   agent_id, attachments, tools_only)
     if "done" in ctx:
         return ctx["done"]
     model = "none"
     for _ in range(tools.MAX_ROUNDS + 1):
-        reply, model = llm.chat(ctx["system"], ctx["history"], private=ctx["private"], max_tokens=ctx["max_tokens"])
+        reply, model = llm.chat(ctx["system"], ctx["history"], private=ctx["private"], max_tokens=ctx["max_tokens"],
+                                prefer=ctx["tool_ctx"].get("prefer"))
         if not _tool_round(ctx, reply):
             break
     else:
@@ -666,15 +685,17 @@ def think(message: str, mode: str = "mirror", conversation: str = "main", use_se
 
 TOOL_STATUS = {"web_search": "Searching the web…", "read_page": "Reading a page…", "search_memory": "Checking my memories…",
                "generate_image": "Making the image…", "schedule": "Scheduling it…", "use_device": "Starting on your device…",
-               "send_message": "Sending it…", "use_skill": "Following a skill…", "suggest_memory": "Noting that…"}
+               "send_message": "Sending it…", "use_skill": "Following a skill…", "suggest_memory": "Noting that…",
+               "generate_video": "Making the video (this can take a few minutes)…", "delegate": "Helpers are working on it…"}
 
 
 def think_stream(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
                  background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
-                 channel: str = ""):
+                 channel: str = "", agent_id: str = "", attachments: list | None = None):
     """One turn, streamed: yields ('text', piece) as the reply is written, ('status', note) while tools run,
     then ('final', result)."""
-    ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel)
+    ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
+                   agent_id, attachments)
     if "done" in ctx:
         yield "text", ctx["done"]["reply"]
         yield "final", ctx["done"]
@@ -685,7 +706,7 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
     for _ in range(tools.MAX_ROUNDS + 1):
         filt = tools.ToolFilter()
         for kind, value in llm.chat_stream(ctx["system"], ctx["history"], private=ctx["private"],
-                                           max_tokens=ctx["max_tokens"]):
+                                           max_tokens=ctx["max_tokens"], prefer=ctx["tool_ctx"].get("prefer")):
             if kind == "text":
                 safe = filt.feed(value)
                 if safe:
@@ -709,8 +730,11 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
 
 
 def deliver_to_chat(text: str, conversation: str = "main") -> None:
-    """Messages the Brain sends on its own (scheduled jobs, heartbeat) appear in the web chat."""
+    """Messages the Brain sends on its own (scheduled jobs, heartbeat) appear in the web chat, with a notification."""
     _save_message(conversation, "assistant", text, "assistant")
+    from . import push
+    first, _, rest = text.partition("\n")
+    push.notify_async(first[:80] or master.brain_name(), (rest.strip() or text)[:240], "/#chat")
 
 
 def history(conversation: str = "main", limit: int = 100) -> list[dict]:

@@ -59,12 +59,24 @@ def reset_dir(token) -> None:
     _user_dir.reset(token)
 
 
+_spawned: list = []
+
+
 def spawn(target, *args) -> threading.Thread:
     """Start a background thread that keeps working on the same user's data."""
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(target, *args), daemon=True)
     t.start()
+    _spawned[:] = [x for x in _spawned if x.is_alive()][-200:] + [t]
     return t
+
+
+def wait_background(timeout: float = 5.0) -> None:
+    """Let short background work (summaries, suggestions) finish. Used by tests and on shutdown."""
+    import time as _t
+    end = _t.time() + timeout
+    for t in list(_spawned):
+        t.join(max(0.0, end - _t.time()))
 
 
 def __getattr__(name):           # config.DATA_DIR etc. always point at the current user's folder

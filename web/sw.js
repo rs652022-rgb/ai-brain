@@ -1,8 +1,8 @@
 // Makes the Brain installable and opens it even without internet (your data stays on the server).
 // Pages and app files: network first (so updates show at once), cached copy when offline.
 // API calls are never cached.
-const CACHE = "brain-shell-v2";
-const SHELL = ["/", "/static/style.css", "/static/app.js", "/static/control.js", "/static/voice.js", "/static/account.js", "/static/agentui.js",
+const CACHE = "brain-shell-v3";
+const SHELL = ["/", "/static/style.css", "/static/app.js", "/static/control.js", "/static/voice.js", "/static/account.js", "/static/agentui.js", "/static/extras.js",
   "/manifest.webmanifest", "/static/icons/icon-192.png", "/static/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -27,4 +27,21 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() => caches.match(e.request).then((hit) => hit || caches.match("/")))
   );
+});
+
+// Notifications from your Brain (reminders, heartbeat alerts, approvals), even when the app is closed.
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data.json(); } catch { d = { title: "Brain", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Brain", {
+    body: d.body || "", icon: "/static/icons/icon-192.png", badge: "/static/icons/icon-192.png", data: { url: d.url || "/" } }));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || "/";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+    const w = wins.find((x) => x.url.startsWith(self.location.origin));
+    return w ? w.focus().then(() => w.navigate(url)) : self.clients.openWindow(url);
+  }));
 });

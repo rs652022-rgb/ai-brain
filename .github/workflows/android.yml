@@ -1,0 +1,51 @@
+# Builds the Brain Android app (an APK you can install directly; no Play Store needed).
+# Actions tab → "Build Android app" → Run workflow → enter your Brain's https address.
+name: Build Android app
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Your Brain's web address (https://...)"
+        required: true
+      app_name:
+        description: "App name on the phone"
+        required: false
+        default: "Brain"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Make the app
+        env:
+          SERVER_URL: ${{ inputs.server_url }}
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          case "$SERVER_URL" in https://*) ;; *) echo "The address must start with https://"; exit 1;; esac
+          mkdir app && cd app
+          npm init -y >/dev/null
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          mkdir www
+          printf '<!doctype html><meta http-equiv="refresh" content="0;url=%s">' "$SERVER_URL" > www/index.html
+          node ../mobile/make-config.js "$SERVER_URL" "$APP_NAME" > capacitor.config.json
+          npx cap add android
+          python3 ../mobile/patch-android.py android ../web/icons/icon-512.png
+      - name: Build the APK
+        run: |
+          cd app/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon -q
+          cp app/build/outputs/apk/debug/app-debug.apk ../../Brain.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Brain-android
+          path: Brain.apk

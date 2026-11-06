@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS job_runs (
     output TEXT NOT NULL DEFAULT ''
 );
 
+-- Usage: model requests per day (for the usage card and /metrics)
+CREATE TABLE IF NOT EXISTS usage (
+    day TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    seconds REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, provider, model)
+);
+
 -- Channels: who may talk to the Brain on Telegram, Discord, Slack and email
 CREATE TABLE IF NOT EXISTS channel_senders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,8 +140,12 @@ def now() -> str:
 
 
 def connect() -> sqlite3.Connection:
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
+    if config.MULTIUSER and config.DATA_DIR != config.ROOT_DATA:
+        if not config.DATA_DIR.exists():      # a deleted account: never bring its folder back
+            raise sqlite3.OperationalError("This account no longer exists.")
+    else:
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

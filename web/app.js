@@ -138,12 +138,52 @@ function setMode(m) {
 }
 $$("#mode button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
-const IMG_RE = /\n*\[Image: (\/api\/media\/[0-9a-f]{16}\.(?:png|jpg))\]/g;
+const IMG_RE = /\n*\[Image: (\/api\/media\/[0-9a-f]{16}\.(?:png|jpg|mp4))\]/g;
 
 function mediaBox(urls) {
-  return el("div", { class: "media" }, ...urls.map((u) => el("a", { href: u, target: "_blank", rel: "noopener" },
-    el("img", { src: u, alt: "Image made by your Brain", loading: "lazy" }))));
+  return el("div", { class: "media" }, ...urls.map((u) => u.endsWith(".mp4")
+    ? el("video", { src: u, controls: "", preload: "metadata" })
+    : el("a", { href: u, target: "_blank", rel: "noopener" }, el("img", { src: u, alt: "Image made by your Brain", loading: "lazy" }))));
 }
+
+// ---------- Attachments ----------
+let ATTACHED = [];
+function renderChips() {
+  const box = $("#attach-chips");
+  box.hidden = !ATTACHED.length;
+  box.replaceChildren(...ATTACHED.map((a, i) => el("span", { class: "chip" }, a.kind === "image" ? "🖼 " : a.kind === "audio" ? "🎙 " : "📄 ",
+    a.name, el("button", { type: "button", "aria-label": `Remove ${a.name}`, onclick: () => { ATTACHED.splice(i, 1); renderChips(); } }, "×"))));
+}
+function takeAttachments() {
+  const ids = ATTACHED.map((a) => a.id);
+  ATTACHED = []; renderChips();
+  return ids;
+}
+$("#attach").addEventListener("click", () => $("#attach-file").click());
+$("#attach-file").addEventListener("change", async (e) => {
+  for (const f of e.target.files) {
+    const fd = new FormData(); fd.append("file", f);
+    try {
+      const res = await fetch("/api/chat/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Upload failed");
+      ATTACHED.push(data); renderChips();
+    } catch (err) { alert(`${f.name}: ${err.message}`); }
+  }
+  e.target.value = "";
+});
+
+// ---------- Agents ----------
+async function loadAgentPicker() {
+  try {
+    const r = await api("/api/agents");
+    const sel = $("#agent-pick"), keep = sel.value;
+    sel.replaceChildren(el("option", { value: "" }, "Main Brain"), ...r.agents.map((a) => el("option", { value: a.id }, a.name)));
+    sel.value = r.agents.some((a) => a.id === keep) ? keep : "";
+    sel.hidden = !r.agents.length;
+  } catch {}
+}
+$("#agent-pick").addEventListener("change", () => loadChat());
 
 function addMsg(role, text, extra) {
   const box = $("#messages");
@@ -188,7 +228,7 @@ function svgMic() {
 let chatSeen = 0;          // id of the newest message shown
 
 async function loadChat() {
-  const hist = await api("/api/chat/history");
+  const hist = await api(`/api/chat/history?agent=${encodeURIComponent($("#agent-pick").value)}`);
   chatSeen = hist.length ? hist[hist.length - 1].id : 0;
   if (!hist.length) return emptyChat();
   $("#messages").replaceChildren();
@@ -199,7 +239,7 @@ async function loadChat() {
 async function refreshChat() {
   if ($("#send").disabled || !$("#auth").hidden || !$("#lock").hidden) return;     // not while answering
   try {
-    const hist = await api("/api/chat/history?limit=1");
+    const hist = await api(`/api/chat/history?limit=1&agent=${encodeURIComponent($("#agent-pick").value)}`);
     if (hist.length && hist[hist.length - 1].id !== chatSeen) loadChat();
   } catch {}
 }
@@ -267,7 +307,7 @@ function replyExtras(r) {
 async function sendChat(e, opts = {}) {
   e?.preventDefault?.();
   const input = $("#chat-input");
-  const text = (opts.text ?? input.value).trim();
+  const text = (opts.text ?? input.value).trim() || (ATTACHED.length ? "Look at what I've attached." : "");
   if (!text) return null;
   input.value = "";
   addMsg("user", opts.spoken ? `🎤 ${text}` : text);
@@ -280,7 +320,8 @@ async function sendChat(e, opts = {}) {
   let reply = "", result = null;
   try {
     const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, mode, use_sealed: $("#use-sealed").checked, web: webOn, voice: !!opts.spoken }) });
+      body: JSON.stringify({ message: text, mode, use_sealed: $("#use-sealed").checked, web: webOn, voice: !!opts.spoken,
+                             agent: $("#agent-pick").value, attachments: takeAttachments() }) });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -327,7 +368,7 @@ async function sendChat(e, opts = {}) {
     return { reply: reply || `Sorry, ${err.message}`, error: true };
   } finally {
     $("#send").disabled = false; if (!opts.spoken) input.focus();
-    api("/api/chat/history?limit=1").then((h) => { if (h.length) chatSeen = h[h.length - 1].id; }).catch(() => {});
+    api(`/api/chat/history?limit=1&agent=${encodeURIComponent($("#agent-pick").value)}`).then((h) => { if (h.length) chatSeen = h[h.length - 1].id; }).catch(() => {});
   }
 }
 let webNext = false;
@@ -728,7 +769,7 @@ loaders.learn = loadLearn;
 
 // ---------- Start ----------
 document.addEventListener("DOMContentLoaded", () =>   // after account.js: log in first on the web version
-  window.bootAuth().then((ok) => ok && loadBrand(true).then((open) => { if (open) { loadStatus(); loadChat(); } })));
+  window.bootAuth().then((ok) => ok && loadBrand(true).then((open) => { if (open) { loadStatus(); loadChat(); loadAgentPicker(); } })));
 setInterval(() => { if ($("#lock").hidden && $("#auth").hidden) loadStatus(); }, 30000);
 window.addEventListener("load", () => {  // after voice.js has loaded
   const startTab = location.hash.slice(1);

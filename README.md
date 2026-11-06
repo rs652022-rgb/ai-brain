@@ -118,6 +118,53 @@ Long chats are summarised automatically, so nothing important is lost.
 
 **Dreaming.** Each night it looks back over the day, writes a short diary entry, and suggests facts to remember. They go to Memories for your approval.
 
+## More features (Phases 2 and 3)
+
+**12 chat apps.**
+- Telegram, Discord, Slack, email.
+- WhatsApp (Meta's official Cloud API).
+- Signal (through signal-cli-rest-api).
+- Matrix, Mattermost, IRC, Twitch chat.
+- SMS (Twilio) and LINE.
+
+WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be online over HTTPS. Every message they send is checked against the service's signature.
+
+**Agents.** Extra assistants inside one Brain, each with its own personality, model, tools and chat apps. For example: a formal "Sales" agent on WhatsApp running `auto:fast`. Pick an agent above the chat, or bind it to a chat app.
+
+**Helpers.** For big research the Brain splits the work across up to 4 helpers working at the same time, then combines their results.
+
+**Attachments.** Attach photos (the model looks at them), PDFs, Word or text files, and voice recordings. Their content is treated as information, never as instructions.
+
+**Media.**
+- Images and short videos through FreeLLMAPI.
+- More web search engines: Exa, Perplexity and Firecrawl.
+
+**MCP.** Connect outside tool servers (GitHub, Notion, databases, files) by URL. On your own computer you can also connect local command servers.
+
+**Browser agent.** Opens websites in a real (hidden) browser, clicks, types and reads the result. It never opens private addresses and never types passwords or card numbers. Install it in Skills.
+
+**Python sandbox.** Runs code for calculations and data work. With Docker it gets no network and limited memory. Without Docker it only runs on your own computer.
+
+**Workflows, standing orders, email watcher.**
+- Workflows: steps that run in order and stop for your approval.
+- Standing orders: rules like "when X happens, do Y", checked during the heartbeat, webhooks and email.
+- Email watcher: reads new mail as untrusted data and tells you only what matters. While reading mail, the Brain can't send messages, browse or use your devices.
+
+**Use it from other apps.**
+- Make an API token in Master. Your Brain then speaks the OpenAI API at `/v1` (model `brain` or `brain:<agent>`), so n8n, scripts and other tools can use it.
+- Terminal app: `python -m brain.cli` for chat, plus `ask`, `status`, `jobs`, `run`, `pending` and `approve`.
+
+**Phones and notifications.**
+- Installed-app notifications work on Android, iPhone/iPad (iOS 16.4+), Windows and Mac.
+- **This device** (Master tab) lets your Brain ask an open phone or laptop for its location, a camera photo or a notification. It asks you every time.
+- An Android APK can be built for free on GitHub: see `mobile/README.md`.
+
+**Plugins and skill packs.**
+- Python plugins add tools. They run only on your computer, or on a server where the admin installed them.
+- Skills can be downloaded and shared as a .zip.
+
+**Monitoring.** Model requests per day in Master → Usage, and Prometheus metrics at `/metrics`.
+
 ## Device control (your computer and phone)
 
 Open the **Control** tab. Nothing happens until you **turn it on** and **allow a device**. You allow it once, and it stays allowed until you switch it off.
@@ -259,6 +306,17 @@ brain/
   automations.py   scheduled jobs, heartbeat, webhooks
   skills.py        SKILL.md skills and self-learning suggestions
   dreaming.py      nightly look back over the day
+  channels_more.py WhatsApp, Signal, Matrix, Mattermost, IRC, Twitch, SMS, LINE
+  agents.py        extra agents with their own persona, model, tools and chat apps
+  attachments.py   photos, documents and voice recordings in chat
+  mcp.py           MCP client (HTTP and local command servers)
+  browser.py       the browser agent (Playwright)
+  sandbox.py       Python sandbox
+  workflows.py     workflows with approvals, standing orders, email watcher
+  push.py          push notifications and the device node
+  usage.py         usage tracking and Prometheus metrics
+  plugins.py       plugins and skill packs
+  cli.py           terminal app
   memory.py        add, tag, search, edit, forget, approval queue, rules
   web.py           web search, safe page reading, PDF/Word reading
   knowledge.py     what it learned: sources, study notes, scheduled topics

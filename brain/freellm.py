@@ -97,6 +97,24 @@ def image(prompt: str, size: str = "1024x1024") -> tuple[bytes, str]:
     raise FreeLLMError("FreeLLMAPI returned no image.")
 
 
+def video(prompt: str, seconds: int = 5) -> bytes:
+    """Generate a short MP4 (can take a few minutes)."""
+    c = _ready()
+    r = httpx.post(f"{c['base_url']}/videos/generations", headers=_headers(c),
+                   json={"model": "auto", "prompt": prompt[:1500], "duration": max(2, min(10, int(seconds)))}, timeout=330)
+    _check(r, "video generation")
+    if r.headers.get("content-type", "").startswith("application/json"):
+        item = (r.json().get("data") or [{}])[0]
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            from . import web
+            web.check_url(item["url"])
+            return httpx.get(item["url"], timeout=120, follow_redirects=True).content
+        raise FreeLLMError("FreeLLMAPI returned no video.")
+    return r.content
+
+
 def speech(text: str, voice: str = "alloy") -> tuple[bytes, str]:
     c = _ready()
     r = httpx.post(f"{c['base_url']}/audio/speech", headers=_headers(c),

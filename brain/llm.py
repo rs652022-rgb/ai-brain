@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import config, settings
+from . import config, settings, usage
 from .providers import PRESETS
 
 log = logging.getLogger("brain.llm")
@@ -254,10 +254,14 @@ def _with_images(kind: str, messages: list[dict]) -> list[dict]:
 
 # ---------- Routing with fallback ----------
 
-def _chain(only: list[str] | None = None) -> list[dict]:
+def _chain(only: list[str] | None = None, prefer: tuple[str, str] | None = None) -> list[dict]:
     data = settings.load()
     order = only or data.get("order") or ["ollama"]
+    if prefer and prefer[0] in PRESETS and not only:     # an agent's own model goes first, the usual order backs it up
+        order = [prefer[0]] + [p for p in order if p != prefer[0]]
     chain = [settings.resolved(pid, data) for pid in order if pid in PRESETS]
+    if prefer and chain and chain[0]["id"] == prefer[0] and prefer[1]:
+        chain[0] = chain[0] | {"model": prefer[1], "fallbacks": []}
     return [p for p in chain if settings.url_allowed(p["base_url"])]
 
 
@@ -267,24 +271,27 @@ def models_for(p: dict) -> list[str]:
 
 
 def chat(system: str, messages: list[dict], private: bool = False, json_mode: bool = False,
-         max_tokens: int = 1200) -> tuple[str, str]:
+         max_tokens: int = 1200, prefer: tuple[str, str] | None = None) -> tuple[str, str]:
     """Answer with the first provider and model that works. Returns (reply, 'provider:model').
 
     Within each provider it tries the main model, then its backup models. A model that is busy (503)
     or out of quota (429) is skipped for a few minutes so later messages don't wait on it.
     """
-    chain = _chain(["ollama"]) if private else _chain()
+    chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
     errors = []
     for p in chain:
         models = models_for(p)
         fresh = [m for m in models if not cooling(p["id"], m)]
         for model in fresh or models[:1]:  # if every model is cooling down, still try the main one
+            t0 = time.time()
             try:
                 reply = call(p | {"model": model}, system, messages, json_mode=json_mode, max_tokens=max_tokens)
                 if errors:
                     log.info("Answered by %s:%s after: %s", p["id"], model, "; ".join(errors))
+                usage.record(p["id"], model, True, time.time() - t0)
                 return reply, f"{p['id']}:{model}"
             except ProviderError as exc:
+                usage.record(p["id"], model, False)
                 errors.append(f"{exc} [{model}]" if len(models) > 1 else str(exc))
                 if exc.key_problem:
                     break
@@ -378,11 +385,12 @@ def _stream_openai(p: dict, system: str, messages: list[dict], max_tokens: int):
             raise ProviderError(pid, f"cannot connect ({exc.__class__.__name__})") from exc
 
 
-def chat_stream(system: str, messages: list[dict], private: bool = False, max_tokens: int = 1200):
+def chat_stream(system: str, messages: list[dict], private: bool = False, max_tokens: int = 1200,
+                prefer: tuple[str, str] | None = None):
     """Like chat(), but yields ('text', piece) as the reply is written, then ('done', 'provider:model').
 
     Failover to the next model/provider happens only before the first words arrive."""
-    chain = _chain(["ollama"]) if private else _chain()
+    chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
     errors = []
     for p in chain:
         models = models_for(p)
@@ -406,9 +414,11 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
                         raise ProviderError(p["id"], "empty reply")
                 else:   # Claude and Ollama: one piece (still fast, just not word by word)
                     yield "text", call(q, system, messages, max_tokens=max_tokens)
+                usage.record(p["id"], model, True)
                 yield "done", f"{p['id']}:{model}"
                 return
             except ProviderError as exc:
+                usage.record(p["id"], model, False)
                 if sent:   # words already shown: stop here rather than mixing two answers
                     yield "done", f"{p['id']}:{model}"
                     return

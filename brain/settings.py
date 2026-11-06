@@ -70,7 +70,7 @@ def save(data: dict) -> dict:
         "cloud_private_tasks": bool(data.get("cloud_private_tasks", False)),
         "web_mode": data.get("web_mode", "ask") if data.get("web_mode") in ("off", "ask", "auto") else "ask",
         "suggest_facts": bool(data.get("suggest_facts", True)),
-        "search_order": [e for e in data.get("search_order", ["duckduckgo"]) if e in ("freellmapi", "duckduckgo", "brave", "tavily", "searxng")],
+        "search_order": [e for e in data.get("search_order", ["duckduckgo"]) if e in ("freellmapi", "duckduckgo", "brave", "tavily", "searxng", "exa", "perplexity", "firecrawl")],
         "search": {},
         "voice": {},
         "thinking": data.get("thinking") if data.get("thinking") in ("fast", "low", "high") else "fast",
@@ -97,8 +97,8 @@ def save(data: dict) -> dict:
         on_disk = json.loads(path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         on_disk = {}
-    for key in ("master", "control", "channels"):
-        clean[key] = data[key] if isinstance(data.get(key), dict) else on_disk.get(key, {})
+    for key in ("master", "control", "channels", "agents", "mcp", "extras"):
+        clean[key] = data[key] if isinstance(data.get(key), (dict, list)) else on_disk.get(key, [] if key in ("agents",) else {})
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean

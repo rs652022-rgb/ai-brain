@@ -1,10 +1,15 @@
 """Local web server. Binds to 127.0.0.1 only, so nothing outside your laptop can reach it."""
+import asyncio
+import contextvars
+import uuid
+import hmac
+import os
 import logging
 import re
 from contextlib import asynccontextmanager
 
 import yaml
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -50,12 +55,16 @@ def _start_scheduler():
                     config._user_role.reset(role)
 
     def fast_loop():
-        from . import automations, channels, dreaming
+        from . import automations, channels, dreaming, plugins
+        plugins.load_all()
         time.sleep(3)
         for_each_brain(channels.restart, "Starting channels")
         ticks = 0
         while True:
             for_each_brain(automations.run_due, "Scheduled jobs")
+            if ticks % 4 == 0:                         # every two minutes
+                from . import workflows
+                for_each_brain(workflows.check_mail, "Email watcher")
             if ticks % 120 == 0:                       # about once an hour
                 for_each_brain(dreaming.nightly, "Dreaming")
             ticks += 1
@@ -77,8 +86,7 @@ def _start_scheduler():
 
 @asynccontextmanager
 async def lifespan(_app):
-    if config.MULTIUSER:
-        accounts.init()
+    accounts.init()                   # also holds API tokens and push subscriptions on a laptop
     db.init()
     knowledge.init()
     identity.ensure()
@@ -99,7 +107,8 @@ OPEN_PATHS = ("/api/master/public", "/api/master/unlock", "/api/master/lock")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
 AUTH_COOKIE = "brain_auth"
 # Reachable without logging in (on a server with accounts)
-PUBLIC_API = ("/api/auth/", "/api/health", "/api/companion/pair", "/api/companion/ws", "/api/hooks/")
+PUBLIC_API = ("/api/auth/", "/api/health", "/api/companion/pair", "/api/companion/ws", "/api/hooks/",
+              "/api/channels/in/", "/v1/")
 MAX_BODY = 30 * 1024 * 1024
 
 
@@ -139,6 +148,10 @@ async def _guard(request, call_next):
     if path.startswith(PUBLIC_API):
         return await call_next(request)
     user = accounts.user_for_token(request.cookies.get(AUTH_COOKIE))
+    bearer = (request.headers.get("authorization") or "")[7:].strip()
+    if not user and bearer:                       # API token (CLI and other apps)
+        found = accounts.token_user(bearer)
+        user = found[0] if found else None
     if not user:
         return JSONResponse(status_code=401, content={"detail": "Please log in.", "login": True})
     request.state.user = user
@@ -638,13 +651,15 @@ class ChatIn(BaseModel):
     use_sealed: bool = False
     web: bool | None = None   # True: search the web for this message (the owner pressed the Web button)
     voice: bool = False       # spoken turn: short, natural, speakable replies
+    agent: str = ""           # which agent answers (empty = the main Brain)
+    attachments: list[str] = []   # ids from /api/chat/upload
 
 
 @app.post("/api/chat")
 def chat(body: ChatIn):
     try:
         return core.think(body.message, mode=body.mode, use_sealed=body.use_sealed, web_override=body.web or None,
-                          voice=body.voice)
+                          voice=body.voice, agent_id=body.agent, attachments=body.attachments)
     except llm.ModelUnavailable as exc:
         _err(exc, 503)
     except ValueError as exc:
@@ -659,7 +674,8 @@ def chat_stream(body: ChatIn):
     def events():
         try:
             for kind, value in core.think_stream(body.message, mode=body.mode, use_sealed=body.use_sealed,
-                                                 web_override=body.web or None, voice=body.voice):
+                                                 web_override=body.web or None, voice=body.voice,
+                                                 agent_id=body.agent, attachments=body.attachments):
                 if kind == "final":
                     yield json.dumps({"type": "final", "result": value}, ensure_ascii=False, default=str) + "\n"
                 else:
@@ -675,8 +691,9 @@ def chat_stream(body: ChatIn):
 
 
 @app.get("/api/chat/history")
-def chat_history(limit: int = 100):
-    return core.history(limit=max(1, min(500, limit)))
+def chat_history(limit: int = 100, agent: str = ""):
+    conv = f"agent:{agent}" if re.fullmatch(r"[a-z0-9-]{1,30}", agent or "") else "main"
+    return core.history(conv, limit=max(1, min(500, limit)))
 
 
 @app.delete("/api/chat/history")
@@ -994,12 +1011,54 @@ def tools_put(body: ToolsIn, request: Request):
 @app.get("/api/media/{name}")
 def media(name: str):
     from . import tools
-    if not re.fullmatch(r"[0-9a-f]{16}\.(png|jpg)", name):
+    if not re.fullmatch(r"(att-)?[0-9a-f]{16}\.(png|jpg|jpeg|webp|gif|mp4)", name):
         raise HTTPException(status_code=404, detail="Not found")
     path = tools.media_dir() / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.post("/api/chat/upload")
+async def chat_upload(file: UploadFile):
+    """Attach a photo, document or voice recording to your next message."""
+    from . import attachments
+    data = await file.read()
+    try:
+        return attachments.store(file.filename or "file", data)
+    except ValueError as exc:
+        _err(exc)
+
+
+# ---------- Agents ----------
+
+@app.get("/api/agents")
+def agents_get():
+    from . import agents
+    return {"agents": agents.list_agents()}
+
+
+class AgentIn(BaseModel):
+    agent: dict
+
+
+@app.post("/api/agents")
+def agents_save(body: AgentIn, request: Request):
+    _need_master(request)
+    from . import agents, channels
+    try:
+        out = agents.save(body.agent)
+    except ValueError as exc:
+        _err(exc)
+    return {"agent": out, "agents": agents.list_agents()}
+
+
+@app.delete("/api/agents/{aid}")
+def agents_delete(aid: str, request: Request):
+    _need_master(request)
+    from . import agents
+    agents.delete(aid)
+    return {"agents": agents.list_agents()}
 
 
 @app.get("/api/chat/search")
@@ -1010,9 +1069,66 @@ def chat_search(q: str):
 # ---------- Channels (Telegram, Discord, Slack, email) ----------
 
 @app.get("/api/channels")
-def channels_get():
+def channels_get(request: Request):
     from . import channels
-    return {"config": channels.public_config(), "status": channels.status(), "senders": channels.senders()}
+    base = f"{_site(request)}/api/channels/in"
+    sec = channels.inbox_secret()
+    return {"config": channels.public_config(), "status": channels.status(), "senders": channels.senders(),
+            "channels": channels.CHANNELS,
+            "webhooks": {c: f"{base}/{c}/{sec}" for c in sorted(channels.WEBHOOK_CHANNELS)}}
+
+
+def _as_owner_of_inbox(secret: str):
+    """Yield once inside the context of the Brain whose webhook inbox this is."""
+    from . import channels
+    users = accounts.list_users() if config.MULTIUSER else [None]
+    for u in users:
+        if u and u["disabled"]:
+            continue
+        tok = config.use_dir(accounts.prepare(u)) if u else None
+        role = config.set_role(u["role"]) if u else None
+        try:
+            if hmac.compare_digest((settings.load().get("channels") or {}).get("_inbox", "") or "-", secret):
+                yield True
+                return
+        finally:
+            if u:
+                config.reset_dir(tok)
+                config._user_role.reset(role)
+
+
+@app.get("/api/channels/in/whatsapp/{secret}")
+def whatsapp_verify(secret: str, request: Request):
+    from . import channels_more
+    for _ in _as_owner_of_inbox(secret):
+        challenge = channels_more.whatsapp_verify(dict(request.query_params))
+        if challenge is not None:
+            return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+@app.post("/api/channels/in/{channel}/{secret}")
+async def channel_inbound(channel: str, secret: str, request: Request):
+    """WhatsApp, SMS (Twilio) and LINE deliver messages here. Each is checked with the service's signature."""
+    from . import channels_more
+    raw = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    for _ in _as_owner_of_inbox(secret):
+        try:
+            if channel == "whatsapp":
+                channels_more.whatsapp_inbound(raw, headers)
+            elif channel == "line":
+                channels_more.line_inbound(raw, headers)
+            elif channel == "sms":
+                form = dict((await request.form()).items())
+                channels_more.sms_inbound(f"{_site(request)}{request.url.path}", form, headers)
+                return Response(content="<Response/>", media_type="text/xml")
+            else:
+                break
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Bad signature")
+        return {"ok": True}
+    raise HTTPException(status_code=404, detail="Unknown inbox")
 
 
 class ChannelsIn(BaseModel):
@@ -1025,7 +1141,7 @@ def channels_put(body: ChannelsIn, request: Request):
     from . import channels
     channels.save_config(body.changes)
     time.sleep(0.3)
-    return channels_get()
+    return channels_get(request)
 
 
 class ApproveIn(BaseModel):
@@ -1041,7 +1157,7 @@ def channels_approve(body: ApproveIn, request: Request):
         channels.approve(body.code, body.allow)
     except ValueError as exc:
         _err(exc)
-    return channels_get()
+    return channels_get(request)
 
 
 class AllowIn(BaseModel):
@@ -1058,7 +1174,7 @@ def channels_allow(body: AllowIn, request: Request):
         channels.add_allowed(body.channel, body.sender, body.name)
     except ValueError as exc:
         _err(exc)
-    return channels_get()
+    return channels_get(request)
 
 
 @app.delete("/api/channels/senders/{sid}")
@@ -1066,7 +1182,7 @@ def channels_remove(sid: int, request: Request):
     _need_master(request)
     from . import channels
     channels.remove_sender(sid)
-    return channels_get()
+    return channels_get(request)
 
 
 @app.post("/api/channels/test/{channel}")
@@ -1207,6 +1323,397 @@ async def webhook_in(secret: str, request: Request):
                 config.reset_dir(tok)
                 config._user_role.reset(role)
     raise HTTPException(status_code=404, detail="Unknown webhook")
+
+
+# ---------- API tokens and the OpenAI-compatible API ----------
+
+def _uid(request) -> int:
+    u = getattr(request.state, "user", None)
+    return u["id"] if u else 0
+
+
+@app.get("/api/tokens")
+def tokens_get(request: Request):
+    return accounts.tokens(_uid(request))
+
+
+class TokenIn(BaseModel):
+    name: str = "API token"
+
+
+@app.post("/api/tokens")
+def tokens_make(body: TokenIn, request: Request):
+    _need_master(request)
+    token, row = accounts.make_token(_uid(request), body.name)
+    db.audit("owner", "token.create", name=row["name"])
+    return row | {"token": token}
+
+
+@app.delete("/api/tokens/{tid}")
+def tokens_drop(tid: int, request: Request):
+    accounts.drop_token(_uid(request), tid)
+    db.audit("owner", "token.delete", id=tid)
+    return {"ok": True}
+
+
+def _api_owner(request) -> tuple[dict | None, int]:
+    """Check the Bearer token of a /v1 call: (user, or None for the laptop owner; token id)."""
+    found = accounts.token_user((request.headers.get("authorization") or "")[7:].strip())
+    if not found or (config.MULTIUSER and not found[0]):
+        raise HTTPException(status_code=401, detail={"error": {"message": "Invalid API token. Make one in Master → API tokens.",
+                                                               "type": "invalid_request_error"}})
+    return found
+
+
+def _as_user(user: dict | None, fn, *args, **kw):
+    """Run fn inside that user's Brain."""
+    if not user:
+        return fn(*args, **kw)
+    tok, role = config.use_dir(accounts.prepare(user)), config.set_role(user["role"])
+    try:
+        return fn(*args, **kw)
+    finally:
+        config.reset_dir(tok)
+        config._user_role.reset(role)
+
+
+@app.get("/v1/models")
+def v1_models(request: Request):
+    from . import agents
+    user, _ = _api_owner(request)
+    ids = ["brain"] + [f"brain:{a['id']}" for a in _as_user(user, agents.list_agents)]
+    return {"object": "list", "data": [{"id": i, "object": "model", "owned_by": "ai-brain"} for i in ids]}
+
+
+@app.post("/v1/chat/completions")
+async def v1_chat(request: Request):
+    """Use your Brain from any app that speaks the OpenAI API (n8n, scripts, other assistants)."""
+    from fastapi.responses import StreamingResponse
+    user, tid = _api_owner(request)
+    body = await request.json()
+    msgs = [m for m in body.get("messages", []) if m.get("role") == "user"]
+    if not msgs:
+        raise HTTPException(status_code=400, detail="messages must include a user message")
+    content = msgs[-1].get("content")
+    text = content if isinstance(content, str) else " ".join(p.get("text", "") for p in content or [] if isinstance(p, dict))
+    model = str(body.get("model") or "brain")
+    agent_id = model.split(":", 1)[1] if model.startswith("brain:") else ""
+    cid, created = f"chatcmpl-{uuid.uuid4().hex[:20]}", int(time.time())
+
+    def run_turn():
+        return _as_user(user, core.think, text, mode="assistant", conversation=f"api:{tid}", agent_id=agent_id)
+
+    if body.get("stream"):
+        def sse():
+            try:
+                reply = run_turn()["reply"]
+            except Exception as exc:
+                reply = f"Error: {exc}"
+            for k in range(0, len(reply), 40):
+                chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+                         "choices": [{"index": 0, "delta": {"content": reply[k:k + 40]}, "finish_reason": None}]}
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            end = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            yield f"data: {json.dumps(end)}\n\ndata: [DONE]\n\n"
+        return StreamingResponse(sse(), media_type="text/event-stream")
+    try:
+        out = await asyncio.to_thread(contextvars.copy_context().run, run_turn)
+    except llm.ModelUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"error": {"message": str(exc).split(chr(10))[0]}})
+    return {"id": cid, "object": "chat.completion", "created": created, "model": model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": out["reply"]}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+
+
+# ---------- Push notifications, device node, usage, metrics ----------
+
+@app.get("/api/push")
+def push_info():
+    from . import push
+    return {"key": push.public_key(), "devices": push.count(), "nodes": push.nodes()}
+
+
+class PushIn(BaseModel):
+    subscription: dict
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(body: PushIn):
+    from . import push
+    try:
+        push.subscribe(body.subscription)
+    except ValueError as exc:
+        _err(exc)
+    return {"ok": True, "devices": push.count()}
+
+
+class PushOffIn(BaseModel):
+    endpoint: str
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(body: PushOffIn):
+    from . import push
+    push.unsubscribe(body.endpoint)
+    return {"ok": True}
+
+
+@app.post("/api/push/test")
+def push_test():
+    from . import push
+    n = push.notify(f"{master.brain_name()} says hi", "Notifications are working.", "/")
+    if not n:
+        _err(ValueError("No device has notifications switched on yet."))
+    return {"sent": n}
+
+
+@app.websocket("/api/node/ws")
+async def node_ws(ws: WebSocket):
+    """The open Brain app on a phone or laptop offers location, camera and notifications to the Brain."""
+    from . import push
+    origin = ws.headers.get("origin") or ""
+    host = ws.headers.get("host") or ""
+    if origin and _host_of(origin) != _host_of(host):
+        await ws.close(code=4003)
+        return
+    user = None
+    if config.MULTIUSER:
+        user = accounts.user_for_token(ws.cookies.get(AUTH_COOKIE))
+        if not user:
+            await ws.close(code=4001)
+            return
+    elif _host_of(host) not in LOCAL_HOSTS:
+        await ws.close(code=4003)
+        return
+    await ws.accept()
+    try:
+        hello = await asyncio.wait_for(ws.receive_json(), 15)
+    except Exception:
+        await ws.close()
+        return
+    caps = [c for c in hello.get("caps", []) if c in ("location", "photo", "notify")]
+    key = str(accounts.user_dir(user)) if user else str(config.ROOT_DATA)
+    node = push.Node(ws, asyncio.get_running_loop(), str(hello.get("name") or "My device")[:40], caps)
+    push.add_node(key, node)
+    try:
+        while True:
+            push.deliver(node, await ws.receive_json())
+    except Exception:
+        pass
+    finally:
+        push.remove_node(key, node)
+
+
+@app.get("/api/usage")
+def usage_get():
+    from . import usage
+    return usage.summary()
+
+
+@app.get("/metrics")
+def metrics(request: Request):
+    """Prometheus metrics. Laptop: this computer only. Server: needs BRAIN_METRICS_TOKEN as a Bearer token."""
+    from . import usage
+    if config.MULTIUSER:
+        want = os.environ.get("BRAIN_METRICS_TOKEN", "")
+        if not want or not hmac.compare_digest((request.headers.get("authorization") or "")[7:], want):
+            raise HTTPException(status_code=401, detail="Set BRAIN_METRICS_TOKEN and send it as a Bearer token.")
+        rows = {}
+        for u in accounts.list_users():
+            rows[str(u["id"])] = _as_user(u, usage.summary, 1)
+        extra = {"users": len(rows)}
+    else:
+        if _host_of(request.headers.get("host") or "") not in LOCAL_HOSTS:
+            raise HTTPException(status_code=403, detail="Only this computer")
+        rows = {"owner": usage.summary(1)}
+        extra = {"memories": memory.stats().get("total", 0)}
+    return Response(content=usage.prometheus(rows, extra), media_type="text/plain; version=0.0.4")
+
+
+# ---------- Plugins and skill packs ----------
+
+@app.get("/api/plugins")
+def plugins_get():
+    from . import plugins
+    return {"plugins": plugins.listing(), "can_install": not config.MULTIUSER}
+
+
+class PluginToggleIn(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/plugins/{name}")
+def plugins_toggle(name: str, body: PluginToggleIn, request: Request):
+    _need_master(request)
+    if config.MULTIUSER and getattr(request.state, "user", {}).get("role") != "admin":
+        _err(PermissionError("Only the admin manages plugins."), 403)
+    from . import plugins
+    plugins.set_enabled(name, body.enabled)
+    db.audit("owner", "plugin.toggle", plugin=name, enabled=body.enabled)
+    return {"plugins": plugins.listing()}
+
+
+@app.post("/api/plugins")
+async def plugins_install(file: UploadFile, request: Request):
+    _need_master(request)
+    from . import plugins
+    try:
+        name = plugins.install_zip(await file.read())
+    except (ValueError, PermissionError) as exc:
+        _err(exc, 403 if isinstance(exc, PermissionError) else 400)
+    return {"installed": name, "plugins": plugins.listing()}
+
+
+@app.get("/api/skills/export")
+def skills_export():
+    from . import plugins
+    return Response(content=plugins.export_skills(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="brain-skills.zip"'})
+
+
+@app.post("/api/skills/import")
+async def skills_import(file: UploadFile):
+    from . import plugins
+    try:
+        return {"added": plugins.import_skills(file.filename or "skills.zip", await file.read())}
+    except Exception as exc:
+        _err(ValueError(f"Couldn't read that skill pack: {exc}"))
+
+
+# ---------- MCP, browser tool, sandbox ----------
+
+@app.get("/api/mcp")
+def mcp_get():
+    from . import browser, mcp, sandbox
+    return {"servers": mcp.public(), "can_stdio": config.allow_private(), "browser": browser.installed(),
+            "sandbox": sandbox.mode()}
+
+
+class McpIn(BaseModel):
+    server: dict
+
+
+@app.post("/api/mcp")
+def mcp_save(body: McpIn, request: Request):
+    _need_master(request)
+    from . import mcp
+    try:
+        s = mcp.upsert(body.server)
+        tools = mcp.refresh(s["name"])
+    except mcp.MCPError as exc:
+        _err(exc)
+    except Exception as exc:
+        _err(RuntimeError(f"Saved, but couldn't connect: {exc}"))
+    return {"tools": tools, "servers": mcp.public()}
+
+
+@app.post("/api/mcp/{name}/refresh")
+def mcp_refresh(name: str):
+    from . import mcp
+    try:
+        return {"tools": mcp.refresh(name), "servers": mcp.public()}
+    except Exception as exc:
+        _err(exc)
+
+
+@app.delete("/api/mcp/{name}")
+def mcp_delete(name: str, request: Request):
+    _need_master(request)
+    from . import mcp
+    mcp.remove(name)
+    return {"servers": mcp.public()}
+
+
+@app.post("/api/browser/install")
+def browser_install(request: Request):
+    _need_master(request)
+    from . import browser
+    try:
+        return browser.install()
+    except browser.BrowserError as exc:
+        _err(exc)
+
+
+# ---------- Workflows, standing orders, email watcher ----------
+
+@app.get("/api/workflows")
+def workflows_get():
+    from . import workflows
+    return {"workflows": workflows.list_workflows(), "runs": workflows.runs(), "orders": workflows.orders(),
+            "mail": workflows.public_mail()}
+
+
+class WorkflowIn(BaseModel):
+    workflow: dict
+
+
+@app.post("/api/workflows")
+def workflows_save(body: WorkflowIn):
+    from . import workflows
+    try:
+        return workflows.save(body.workflow)
+    except ValueError as exc:
+        _err(exc)
+
+
+@app.delete("/api/workflows/{wid}")
+def workflows_delete(wid: str):
+    from . import workflows
+    workflows.delete(wid)
+    return {"ok": True}
+
+
+@app.post("/api/workflows/{wid}/run")
+def workflows_run(wid: str):
+    from . import workflows
+    try:
+        return workflows.start(wid)
+    except ValueError as exc:
+        _err(exc)
+
+
+class DecideIn(BaseModel):
+    approve: bool
+
+
+@app.post("/api/workflows/runs/{rid}/decide")
+def workflows_decide(rid: str, body: DecideIn):
+    from . import workflows
+    try:
+        return workflows.decide(rid, body.approve)
+    except ValueError as exc:
+        _err(exc)
+
+
+class OrdersIn(BaseModel):
+    orders: list[dict]
+
+
+@app.put("/api/orders")
+def orders_put(body: OrdersIn):
+    from . import workflows
+    return {"orders": workflows.save_orders(body.orders)}
+
+
+class MailIn(BaseModel):
+    changes: dict
+
+
+@app.put("/api/mailwatch")
+def mailwatch_put(body: MailIn, request: Request):
+    _need_master(request)
+    from . import workflows
+    return workflows.save_mail(body.changes)
+
+
+@app.post("/api/mailwatch/check")
+def mailwatch_check():
+    from . import workflows
+    try:
+        return {"new": workflows.check_mail()}
+    except Exception as exc:
+        _err(RuntimeError(f"Couldn't read the mailbox: {exc}"))
 
 
 # ---------- Skills and dreaming ----------

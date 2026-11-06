@@ -99,6 +99,21 @@ def init() -> None:
             expires REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS api_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,              -- 0 = the owner of a laptop Brain
+            name TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created TEXT NOT NULL,
+            last_used TEXT
+        );
+        CREATE TABLE IF NOT EXISTS push_subs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            endpoint TEXT NOT NULL UNIQUE,
+            sub TEXT NOT NULL,
+            created TEXT NOT NULL
+        );
         """)
 
 
@@ -348,7 +363,11 @@ def delete_account(user_id: int) -> None:
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     d = config.ROOT_DATA / "users" / str(int(user_id))
     _ready.discard(str(d))
-    shutil.rmtree(d, ignore_errors=True)
+    for _ in range(10):                       # background work may still be closing files: try until it's gone
+        shutil.rmtree(d, ignore_errors=True)
+        if not d.exists():
+            break
+        time.sleep(0.2)
 
 
 # ---------- Admin ----------
@@ -434,3 +453,40 @@ def companions(user_id: int) -> list[dict]:
 def remove_companion(user_id: int, cid: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM companions WHERE id=? AND user_id=?", (cid, user_id))
+
+
+# ---------- Personal API tokens (CLI, OpenAI-compatible API, other apps) ----------
+
+def make_token(user_id: int, name: str) -> tuple[str, dict]:
+    token = "brain_" + secrets.token_urlsafe(32)
+    with _conn() as c:
+        cur = c.execute("INSERT INTO api_tokens(user_id, name, token_hash, created) VALUES(?,?,?,?)",
+                        (user_id, (name or "API token")[:60], _token_hash(token), _now()))
+        row = c.execute("SELECT id, name, created, last_used FROM api_tokens WHERE id=?", (cur.lastrowid,)).fetchone()
+    return token, dict(row)
+
+
+def tokens(user_id: int) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute("SELECT id, name, created, last_used FROM api_tokens WHERE user_id=? ORDER BY id",
+                                           (user_id,)).fetchall()]
+
+
+def drop_token(user_id: int, tid: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM api_tokens WHERE id=? AND user_id=?", (tid, user_id))
+
+
+def token_user(token: str) -> tuple[dict | None, int] | None:
+    """(user or None for the laptop owner, token id) for a valid API token."""
+    if not (token or "").startswith("brain_"):
+        return None
+    with _conn() as c:
+        row = c.execute("SELECT * FROM api_tokens WHERE token_hash=?", (_token_hash(token),)).fetchone()
+        if not row:
+            return None
+        c.execute("UPDATE api_tokens SET last_used=? WHERE id=?", (_now(), row["id"]))
+        if row["user_id"] == 0:
+            return None, row["id"]
+        u = c.execute("SELECT * FROM users WHERE id=? AND disabled=0", (row["user_id"],)).fetchone()
+    return (_public(u), row["id"]) if u else None

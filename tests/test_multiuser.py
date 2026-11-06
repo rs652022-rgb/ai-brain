@@ -203,8 +203,12 @@ def test_tasks_are_private(w):
     assert w.b.get(f"/api/control/task/{t['id']}").status_code == 404
     assert w.b.get("/api/control/tasks").json() == []
     assert w.b.post("/api/control/stop").json()["stopped"] == 0
-    time.sleep(0.3)
-    assert w.a.get(f"/api/control/task/{t['id']}").json()["status"] == "failed"     # no computer connected
+    for _ in range(50):
+        status = w.a.get(f"/api/control/task/{t['id']}").json()["status"]
+        if status != "running":
+            break
+        time.sleep(0.1)
+    assert status == "failed"                                                       # no computer connected
 
 
 def test_companion_download(w):

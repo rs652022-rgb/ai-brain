@@ -108,15 +108,19 @@
       <button class="ghost voice-btn" id="talk-toggle" title="Hands-free conversation: it listens, answers aloud, and listens again"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg>Talk</button>
       <button class="ghost voice-btn" id="wake-toggle" title="Listen for the wake word while this page is open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 1 1 12 0c0 3-2 4.5-3 5.5S13.5 17 13.5 19a2.5 2.5 0 0 1-5 0"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0"/></svg>Wake word</button>
       <button class="ghost voice-btn on" id="speak-toggle" title="Read replies aloud" aria-label="Read replies aloud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
+      <select id="agent-pick" class="agent-pick" aria-label="Which agent answers" hidden><option value="">Main Brain</option></select>
       <label class="check"><input type="checkbox" id="use-sealed"> Use sealed memories</label>
       <button class="ghost" id="clear-chat">Clear chat</button>
     </div>
     <div class="voice-bar" id="voice-bar" hidden><span class="pulse"></span><span id="voice-state">Listening…</span>
       <button class="mini" id="voice-stop">Stop (Esc)</button></div>
     <div class="messages" id="messages"></div>
+    <div class="attach-chips" id="attach-chips" hidden></div>
     <form class="composer" id="chat-form">
       <textarea id="chat-input" rows="2" placeholder="Type, or tap the mic. Try /learn, /read, /rule, /web"></textarea>
       <button type="button" id="mic" class="ghost" title="Speak (click, talk, pause to send)" aria-label="Speak"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button type="button" id="attach" class="ghost" title="Attach a photo, PDF, document or voice recording" aria-label="Attach"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+      <input type="file" id="attach-file" multiple hidden accept="image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,audio/*">
       <button type="button" id="web-toggle" class="ghost" title="Search the web for this message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg><span class="label">Web</span></button>
       <button type="submit" class="primary" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
@@ -440,6 +444,8 @@
       <div class="row"><input id="ch-email-add" placeholder="your.own@email.com" aria-label="Allowed email"><button id="ch-email-allow">Allow this address</button></div>
     </div>
 
+    <div id="ch-more"></div>
+
     <div class="row"><button class="primary" id="ch-save">Save channels</button></div>
     <p class="note" id="ch-save-note"></p>
 
@@ -491,6 +497,44 @@
     </div>
 
     <div class="card">
+      <h2>Workflows</h2>
+      <p class="hint">Steps that run in order, with stops for your approval. One step per line:
+        <code>prompt: …</code> (use <code>{{previous}}</code> for the last step's result), <code>approve: question</code>,
+        <code>send: telegram</code> (or web, discord, slack, email, whatsapp…), <code>tool: web_search {"query": "…"}</code>.
+        To run one on a schedule, schedule a job whose task is <code>workflow:&lt;id&gt;</code>.</p>
+      <div class="mgrid"><label class="field">Name<input id="wf-name" placeholder="Weekly leads"></label></div>
+      <label class="field">Steps<textarea id="wf-steps" rows="5" placeholder="prompt: Find 5 businesses in Jaipur without a website, with phone numbers.&#10;approve: Send this list to Telegram?&#10;send: telegram"></textarea></label>
+      <div class="row"><button class="primary" id="wf-save">Save workflow</button></div>
+      <p class="note" id="wf-note"></p>
+      <div id="wf-list" class="list"></div>
+      <h3 style="margin-top:18px">Runs</h3>
+      <div id="wf-runs" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Standing orders</h2>
+      <p class="hint">"When something happens, do this." Checked during the heartbeat, webhooks and the email watcher (never on your chats). One per line as <code>when … =&gt; do …</code>.</p>
+      <label class="field">Orders<textarea id="so-list" rows="4" placeholder="an email from a client mentions an invoice => remind me on Telegram the same day&#10;a new website lead arrives => draft a friendly reply and send it to me"></textarea></label>
+      <div class="row"><button id="so-save">Save orders</button></div>
+      <p class="note" id="so-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Email watcher</h2>
+      <p class="hint">Reads new mail in a mailbox you choose (it doesn't mark anything as read) and tells you only what needs attention. Emails are treated as untrusted: while reading them the Brain can't send messages, browse or use your devices. Gmail needs an app password.</p>
+      <div class="mgrid">
+        <label class="field">Email address<input id="mw-address" placeholder="you@gmail.com"></label>
+        <label class="field">App password<input id="mw-password" type="password"></label>
+        <label class="field">IMAP server<input id="mw-host" placeholder="imap.gmail.com"></label>
+        <label class="field">Tell me on<select id="mw-deliver"></select></label>
+      </div>
+      <label class="field">Instruction<input id="mw-prompt"></label>
+      <div class="switches"><label class="switch"><span>Watch my inbox<small>Checks every 2 minutes.</small></span><input type="checkbox" id="mw-on"></label></div>
+      <div class="row"><button id="mw-save">Save</button><button id="mw-check">Check now</button></div>
+      <p class="note" id="mw-note"></p>
+    </div>
+
+    <div class="card">
       <h2>Your jobs</h2>
       <div id="au-list" class="list"></div>
     </div>
@@ -509,6 +553,49 @@
       <label class="field">Instructions<textarea id="sk-body" rows="6" placeholder="1. Ask for the budget, deadline and the 3 must-have pages.&#10;2. Use my standard packages: Starter ₹25k, Business ₹60k…"></textarea></label>
       <div class="row"><button class="primary" id="sk-save">Save skill</button></div>
       <p class="note" id="sk-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Agents</h2>
+      <p class="hint">Extra assistants inside your Brain. Each shares your memories but has its own name, personality, model, tools and chat apps, e.g. a polite "Sales" agent on WhatsApp, or a "Coder" on Discord. Pick one above the chat to talk to it.</p>
+      <div id="ag-list" class="list"></div>
+      <div class="mgrid" style="margin-top:12px">
+        <label class="field">Name<input id="ag-name" placeholder="Sales"></label>
+        <label class="field">Model (optional)<input id="ag-model" placeholder="auto:fast  or  groq:llama-3.3-70b-versatile"></label>
+        <label class="field">Answers on these chat apps<input id="ag-channels" placeholder="whatsapp, sms"></label>
+        <label class="field">Tools it may NOT use<input id="ag-tools" placeholder="use_device, run_python"></label>
+      </div>
+      <label class="field">Personality and job<textarea id="ag-persona" rows="3" placeholder="You are Rahul's sales assistant for his web-development business. Be polite and formal, answer questions about packages, and collect the client's name, budget and deadline."></textarea></label>
+      <div class="row"><button class="primary" id="ag-save">Save agent</button></div>
+      <p class="note" id="ag-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>MCP servers</h2>
+      <p class="hint">Connect outside tools that speak MCP (GitHub, Notion, databases, your files…). The Brain sees their tools and can call them while answering.</p>
+      <div id="mcp-list" class="list"></div>
+      <div class="mgrid" style="margin-top:12px">
+        <label class="field">Name<input id="mcp-name" placeholder="github"></label>
+        <label class="field">Type<select id="mcp-kind"><option value="http">Web address (HTTP)</option><option value="stdio">Command on this computer</option></select></label>
+        <label class="field" id="mcp-url-f">Server URL<input id="mcp-url" placeholder="https://…/mcp"></label>
+        <label class="field" id="mcp-cmd-f" hidden>Command<input id="mcp-cmd" placeholder="npx -y @modelcontextprotocol/server-filesystem C:/Users/Rahul/Documents"></label>
+        <label class="field">Header (optional)<input id="mcp-header" placeholder="Authorization: Bearer …"></label>
+      </div>
+      <div class="row"><button class="primary" id="mcp-save">Connect</button></div>
+      <p class="note" id="mcp-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>Plugins, skill packs, browser and code</h2>
+      <p class="hint" id="pl-state"></p>
+      <div id="pl-list" class="list"></div>
+      <div class="row">
+        <button id="pl-install-btn">Install plugin (.zip)</button><input type="file" id="pl-file" accept=".zip" hidden>
+        <button id="sk-export">Download my skills</button>
+        <button id="sk-import-btn">Import skill pack</button><input type="file" id="sk-file" accept=".zip,.md" hidden>
+        <button id="br-install">Install the browser tool</button>
+      </div>
+      <p class="note" id="pl-note"></p>
     </div>
 
     <div class="card">
@@ -681,6 +768,31 @@
       </ul>
     </div>
 
+    <div class="card" id="d-device">
+      <h2>This device</h2>
+      <p class="hint">Turn on notifications to hear from your Brain when the app is closed (reminders, heartbeat alerts, approvals). "Let my Brain use this device" lets it ask this phone or laptop for its location, a camera photo or a notification while the app is open; it asks you every time.</p>
+      <div class="switches">
+        <label class="switch"><span>Notifications on this device<small id="d-push-state"></small></span><input type="checkbox" id="d-push"></label>
+        <label class="switch"><span>Let my Brain use this device<small>Location, camera photo, notifications. Asks you each time.</small></span><input type="checkbox" id="d-node"></label>
+      </div>
+      <div class="row"><button id="d-test">Send a test notification</button></div>
+      <p class="note" id="d-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>API tokens</h2>
+      <p class="hint">Use your Brain from the terminal (<code>python -m brain.cli</code>) or any app that speaks the OpenAI API: base URL <code id="tk-base"></code>, model <code>brain</code> (or <code>brain:&lt;agent&gt;</code>), and a token below as the API key.</p>
+      <div id="tk-list" class="list"></div>
+      <div class="row"><input id="tk-name" placeholder="Token name, e.g. n8n" style="max-width:260px"><button id="tk-make">Make a token</button></div>
+      <div id="tk-out" class="pair-out" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2>Usage</h2>
+      <p class="hint">Model requests per day. Monitoring tools can read <code>/metrics</code> (Prometheus format).</p>
+      <div id="us-table"></div>
+    </div>
+
     <div id="m-body">
       <div class="state" id="m-state">
         <span class="lamp"></span><strong id="m-state-text">Awake and listening</strong>
@@ -766,6 +878,7 @@
 <script src="/static/control.js"></script>
 <script src="/static/account.js"></script>
 <script src="/static/agentui.js"></script>
+<script src="/static/extras.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>
