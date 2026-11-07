@@ -412,3 +412,16 @@ def test_listener_learns_custom_activation_words(x):
     assert listener.wake_list() == ["hey jarvis"]
     st = x.c.get("/api/listener").json()
     assert st["available"] and st["state"] == "off"
+
+
+def test_voice_commands_prefer_freellmapi_fast_models(x):
+    data = x.settings.load()
+    data.setdefault("providers", {})["freellmapi"] = {"api_key": "k"}
+    data["order"] = ["freellmapi", "gemini"]
+    x.settings.save(data)
+    assert x.llm.voice_model() == ("freellmapi", "auto:fast")
+    x.script.append("Okay.")
+    x.c.post("/api/voice/command", json={"text": "what's next today", "device": "phone"})
+    assert x.calls[-1][2]["prefer"] == ("freellmapi", "auto:fast")
+    data = x.settings.load(); data["voice_model"] = ""; x.settings.save(data)
+    assert x.llm.voice_model() is None

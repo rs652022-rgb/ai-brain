@@ -99,6 +99,8 @@ def save(data: dict) -> dict:
         on_disk = {}
     for key in ("master", "control", "channels", "agents", "mcp", "extras", "limits", "vault", "memory_engines", "gmail", "remote", "listener"):
         clean[key] = data[key] if isinstance(data.get(key), (dict, list)) else on_disk.get(key, [] if key in ("agents",) else {})
+    vm = data.get("voice_model", on_disk.get("voice_model", "auto:fast"))
+    clean["voice_model"] = vm if vm in ("", "auto", "auto:fast", "auto:smart", "fusion") else "auto:fast"
     lm = data.get("light_model", on_disk.get("light_model", "auto:fast"))
     clean["light_model"] = lm if lm in ("", "auto", "auto:fast", "auto:smart") else "auto:fast"
     with _lock:

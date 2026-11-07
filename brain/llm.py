@@ -592,6 +592,16 @@ def light() -> tuple[str, str] | None:
     return None
 
 
+def voice_model() -> tuple[str, str] | None:
+    """Spoken commands (activation word, phone, Siri): FreeLLMAPI's fast free models answer quickly and save
+    tokens. Settings key "voice_model": "auto:fast" (default), "auto", "auto:smart", or "" to use the usual order."""
+    data = settings.load()
+    model = data.get("voice_model", "auto:fast")
+    if model and "freellmapi" in data.get("order", []) and settings.resolved("freellmapi", data).get("api_key"):
+        return ("freellmapi", model)
+    return None
+
+
 def private_json(system: str, prompt: str) -> dict | None:
     """Tagging and fact extraction. Local first; cloud only if allowed in Settings. None if unavailable."""
     msgs = [{"role": "user", "content": prompt}]

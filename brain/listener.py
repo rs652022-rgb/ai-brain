@@ -332,7 +332,8 @@ _local: dict = {"listener": None}
 
 def _local_handler(text: str) -> str:
     from . import core
-    out = core.think(text, mode="assistant", conversation="main", voice=True)
+    from . import llm
+    out = core.think(text, mode="assistant", conversation="main", voice=True, prefer=llm.voice_model())
     return out["reply"]
 
 

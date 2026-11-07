@@ -691,12 +691,15 @@ def _apply_steering(ctx: dict, goals) -> bool:
 def think(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
           background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
           channel: str = "", agent_id: str = "", attachments: list | None = None,
-          tools_only: list | None = None) -> dict:
-    """One full turn, returned when the whole reply is ready (tools included)."""
+          tools_only: list | None = None, prefer: tuple | None = None) -> dict:
+    """One full turn, returned when the whole reply is ready (tools included).
+    prefer: a model to try first, e.g. llm.light() = FreeLLMAPI's fast free pool for spoken commands."""
     ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
                    agent_id, attachments, tools_only)
     if "done" in ctx:
         return ctx["done"]
+    if prefer and not ctx["tool_ctx"].get("prefer"):
+        ctx["tool_ctx"]["prefer"] = prefer
     from . import goals
     goals.aborted(ctx["conversation"])            # forget a Stop pressed after the last answer had finished
     model = "none"

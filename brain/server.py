@@ -1016,7 +1016,8 @@ async def companion_ws(ws: WebSocket):
         t = config.use_dir(accounts.prepare(user))
         r = config.set_role(user["role"])
         try:
-            reply = core.think(str(msg.get("text", ""))[:2000], mode="assistant", conversation="main", voice=True)["reply"]
+            reply = core.think(str(msg.get("text", ""))[:2000], mode="assistant", conversation="main", voice=True,
+                               prefer=llm.voice_model())["reply"]
         except Exception as exc:
             reply = f"Sorry, {str(exc).splitlines()[0]}"
         finally:
@@ -2852,7 +2853,7 @@ def voice_command(body: VoiceIn, request: Request, format: str = "json"):
         _err(ValueError("Say something after the wake word."))
     out: dict = {}
     try:
-        out = core.think(text, mode="assistant", conversation="main", voice=True)
+        out = core.think(text, mode="assistant", conversation="main", voice=True, prefer=llm.voice_model())
         reply = out["reply"]
     except llm.ModelUnavailable as exc:
         reply = str(exc).split("\n")[0]
