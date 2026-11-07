@@ -94,6 +94,9 @@ async def lifespan(_app):
     identity.ensure()
     settings.load()
     _start_scheduler()
+    if not config.MULTIUSER and config.os.environ.get("BRAIN_NO_SCHEDULER") != "1":
+        from . import remote
+        remote.watch()                # "Use from my phone": listens on the Tailscale address when switched on
     db.audit("system", "startup", providers=settings.load().get("order", []))
     yield
 
@@ -137,8 +140,21 @@ async def _guard(request, call_next):
         return JSONResponse(status_code=413, content={"detail": "That upload is too big (30 MB at most)."})
 
     if not config.MULTIUSER:
-        if _host_of(host) not in LOCAL_HOSTS or (origin and origin != "null" and _host_of(origin) not in LOCAL_HOSTS):
-            return JSONResponse(status_code=403, content={"detail": "Only this computer can use the Brain."})
+        from . import remote
+        client = request.client.host if request.client else ""
+        loopback = client in ("127.0.0.1", "::1", "testclient")
+        proxied = bool(request.headers.get("x-forwarded-for") or request.headers.get("tailscale-user-login"))
+        is_local = (_host_of(host) in LOCAL_HOSTS and loopback and not proxied
+                    and not (origin and origin != "null" and _host_of(origin) not in LOCAL_HOSTS))
+        if not is_local:
+            # "Use from my phone": only your own Tailscale devices, and only with the remote password
+            via_tailnet = remote.is_tailnet(client) or (loopback and _host_of(host).endswith(".ts.net"))
+            if not (via_tailnet and remote.cfg()["enabled"]):
+                return JSONResponse(status_code=403, content={"detail": "Only this computer can use the Brain."})
+            if origin and origin != "null" and _host_of(origin) != _host_of(host):
+                return JSONResponse(status_code=403, content={"detail": "Requests from other websites are not allowed."})
+            if path not in ("/api/remote/login", "/api/remote/state") and not remote.session_ok(request.cookies.get(remote.COOKIE)):
+                return JSONResponse(status_code=401, content={"detail": "Sign in with your phone password.", "remote": True})
         if path not in OPEN_PATHS and master.get()["lock_app"]:
             if not master.session_ok(request.cookies.get(SESSION_COOKIE)):
                 return JSONResponse(status_code=401, content={"detail": "Locked. Enter your Master PIN.", "locked": True})
@@ -2636,3 +2652,70 @@ async def backup_restore(file: UploadFile, request: Request):
         return await asyncio.to_thread(backup.restore, blob, passphrase)
     except backup.BackupError as exc:
         _err(exc)
+
+
+# ---------- Use from my phone (Tailscale) ----------
+
+class RemoteIn(BaseModel):
+    password: str = ""
+    enabled: bool | None = None
+
+
+@app.get("/api/remote")
+def remote_get():
+    from . import remote
+    return remote.status()
+
+
+@app.get("/api/remote/state")
+def remote_state(request: Request):
+    from . import remote
+    return {"signed_in": remote.session_ok(request.cookies.get(remote.COOKIE))}
+
+
+@app.put("/api/remote")
+def remote_put(body: RemoteIn, request: Request):
+    from . import remote
+    _need_master(request)
+    client = request.client.host if request.client else ""
+    if client not in ("127.0.0.1", "::1", "testclient") or request.headers.get("x-forwarded-for"):
+        _err(ValueError("Change phone access on the computer itself."), 403)
+    try:
+        if body.password:
+            remote.set_password(body.password)
+        if body.enabled is not None:
+            return remote.set_enabled(body.enabled)
+        return remote.status()
+    except remote.RemoteError as exc:
+        _err(exc)
+
+
+@app.post("/api/remote/login")
+def remote_login(body: RemoteIn, request: Request):
+    from . import remote
+    ip = (request.client.host if request.client else "") + "|" + (request.headers.get("tailscale-user-login") or "")
+    try:
+        token = remote.login(body.password, ip)
+    except remote.RemoteError as exc:
+        _err(exc, 401)
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(remote.COOKIE, token, max_age=remote.SESSION_DAYS * 86400, httponly=True, samesite="strict", secure=secure)
+    return resp
+
+
+@app.post("/api/remote/logout")
+def remote_logout(request: Request):
+    from . import remote
+    remote.logout(request.cookies.get(remote.COOKIE))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(remote.COOKIE)
+    return resp
+
+
+@app.post("/api/remote/logout-all")
+def remote_logout_all(request: Request):
+    from . import remote
+    _need_master(request)
+    remote.logout_all()
+    return {"ok": True}

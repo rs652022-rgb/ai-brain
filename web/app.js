@@ -11,6 +11,7 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data.locked) showLock();
   if (res.status === 401 && data.login) window.showAuth?.();
+  if (res.status === 401 && data.remote) window.showRemoteLogin?.();
   if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
 }

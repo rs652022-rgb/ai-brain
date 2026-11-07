@@ -422,3 +422,59 @@ function buildBackup(box) {
 }
 const _mLoad = loaders.master;
 loaders.master = async () => { await _mLoad(); once("#tab-master", "backup-box", buildBackup); };
+
+// ---------- Use from my phone (Tailscale) ----------
+window.showRemoteLogin = function () {
+  if (document.getElementById("remote-login")) return;
+  const pw = el("input", { type: "password", placeholder: "Phone password", autocomplete: "current-password", "aria-label": "Phone password" });
+  const msg = el("p", { class: "note" });
+  const box = el("div", { id: "remote-login", class: "lock" },
+    el("form", { class: "card", style: "max-width:360px;margin:15vh auto" },
+      el("h2", {}, "Sign in to your Brain"),
+      el("p", { class: "hint" }, "You're opening your Brain from another device. Enter the phone password you set on your computer."),
+      el("div", { class: "row" }, pw, el("button", { class: "primary", type: "submit" }, "Sign in")), msg));
+  box.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await api("/api/remote/login", { method: "POST", body: { password: pw.value } }); location.reload(); }
+    catch (err) { msg.textContent = err.message; msg.classList.add("err"); pw.select(); }
+  });
+  document.body.append(box);
+  setTimeout(() => pw.focus(), 50);
+};
+
+function buildRemote(box) {
+  box.append(card("Use from my phone", "Open this Brain from your phone or another laptop, privately. It uses Tailscale (free): " +
+    "only your own devices can reach it, never the internet or your Wi-Fi neighbours, and it asks for a password. This computer must be on.",
+    el("ol", { class: "steps" },
+      el("li", {}, "Install Tailscale on this computer and on your phone (tailscale.com/download) and sign in to both with the same Google account."),
+      el("li", {}, "Set a phone password below (10+ characters) and switch phone access on."),
+      el("li", {}, "On your phone, open the address shown below and sign in. For the microphone and 'Add to Home Screen', use the https address: run ",
+        el("code", { class: "mono" }, "tailscale serve --bg 8765"), " once on this computer.")),
+    el("div", { class: "mgrid" }, field("Phone password", input("rm-pass", "at least 10 characters", "password"))),
+    el("div", { class: "switches" }, el("label", { class: "switch" }, el("span", {}, "Phone access on"), el("input", { type: "checkbox", id: "rm-on" }))),
+    el("p", { class: "meta", id: "rm-state" }),
+    el("div", { class: "row" },
+      el("button", { class: "primary", onclick: () => tryNote("#rm-note", async () => {
+        const body = { enabled: $("#rm-on").checked };
+        if ($("#rm-pass").value) body.password = $("#rm-pass").value;
+        await api("/api/remote", { method: "PUT", body }); $("#rm-pass").value = ""; loadRemote();
+      }, "Saved.") }, "Save"),
+      el("button", { onclick: () => confirm("Sign out every phone and laptop?") && tryNote("#rm-note", async () => { await api("/api/remote/logout-all", { method: "POST" }); loadRemote(); }, "Everyone is signed out.") }, "Sign out everywhere")),
+    noteEl("rm-note")));
+}
+async function loadRemote() {
+  const s = await api("/api/remote").catch(() => null);
+  if (!s) return;
+  if (!s.available) { $("#remote-box").hidden = true; return; }
+  $("#rm-on").checked = s.enabled;
+  $("#rm-pass").placeholder = s.has_password ? "saved (type a new one to change)" : "at least 10 characters";
+  const parts = [];
+  if (!s.tailscale_ip) parts.push("Tailscale isn't running on this computer yet.");
+  else parts.push(`Tailscale is on (${s.tailscale_ip}).`);
+  if (s.enabled && s.listening) parts.push(`Open on your phone: ${s.address}` + (s.https_address ? `  ·  or ${s.https_address} (after tailscale serve)` : ""));
+  else if (s.enabled) parts.push("Waiting for Tailscale to connect…");
+  if (s.sessions) parts.push(`${s.sessions} device(s) signed in.`);
+  $("#rm-state").textContent = parts.join("  ");
+}
+const _mLoad2 = loaders.master;
+loaders.master = async () => { await _mLoad2(); once("#tab-master", "remote-box", buildRemote); loadRemote(); };

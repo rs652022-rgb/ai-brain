@@ -201,6 +201,10 @@ WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be 
 
 **Skill marketplace.** Search ClawHub (OpenClaw's public skill registry, flagged skills hidden) and add skills; they arrive as "suggested" for you to read first. On a shared server people can publish skills to the server's shelf; the admin approves them.
 
+**Use from my phone.** Keep the Brain on your own computer and open it from your phone over Tailscale (free, private): it listens only on your Tailscale address and asks for a password. Master → Use from my phone.
+
+**Backup and restore.** Your whole Brain in one passphrase-encrypted file, to keep safe or move to another computer or server. Master → Backup and restore.
+
 **Gmail push alerts.** Gmail tells the Brain the moment mail arrives (Google's free Gmail API + Pub/Sub, your own Cloud project, read-only access). Needs the Brain online over HTTPS; on a laptop the 2-minute email watcher still works.
 
 ## Device control (your computer and phone)

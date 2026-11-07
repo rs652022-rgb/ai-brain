@@ -316,3 +316,31 @@ def test_encrypted_backup_restores_memories_and_vault(x):
     assert x.vault.resolve("{{secret:github}}", "https://github.com/")[0] == "pw-123456"
     with pytest.raises(backup.BackupError):
         backup.make("short")
+
+
+def test_phone_access_only_over_tailscale_with_password(x):
+    from fastapi.testclient import TestClient
+    from brain import remote, server
+    importlib.reload(remote)
+    x.mp.setattr(remote, "start", lambda: "")                   # no real listener in tests
+    phone = TestClient(server.app, base_url="http://100.101.1.2:8766", client=("100.101.1.2", 50000))
+    wifi = TestClient(server.app, base_url="http://192.168.1.20:8765", client=("192.168.1.20", 50000))
+    assert phone.get("/api/status").status_code == 403           # off by default
+    assert x.c.put("/api/remote", json={"enabled": True}).status_code == 400      # needs a password first
+    assert x.c.put("/api/remote", json={"password": "short"}).status_code == 400
+    assert x.c.put("/api/remote", json={"password": "a-long-phone-pass", "enabled": True}).json()["enabled"]
+    assert wifi.get("/api/status").status_code == 403           # Wi-Fi and the internet: never
+    r = phone.get("/api/status")
+    assert r.status_code == 401 and r.json()["remote"]
+    assert phone.post("/api/remote/login", json={"password": "wrong"}).status_code == 401
+    assert phone.put("/api/remote", json={"enabled": False}).status_code in (401, 403)   # settings only on the computer
+    assert phone.post("/api/remote/login", json={"password": "a-long-phone-pass"}).status_code == 200
+    assert phone.get("/api/status").status_code == 200
+    assert phone.put("/api/remote", json={"enabled": False}).status_code == 403
+    assert phone.post("/api/master/unlock", json={"pin": "x"}, headers={"Origin": "https://evil.example"}).status_code == 403
+    for _ in range(8):
+        phone.post("/api/remote/login", json={"password": "nope"})
+    assert "Too many" in phone.post("/api/remote/login", json={"password": "a-long-phone-pass"}).json()["detail"]
+    x.c.post("/api/remote/logout-all")
+    assert phone.get("/api/status").status_code == 401
+    assert remote.is_tailnet("100.64.0.1") and not remote.is_tailnet("192.168.1.2") and remote.is_tailnet("fd7a:115c:a1e0::1")

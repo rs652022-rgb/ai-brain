@@ -13,6 +13,19 @@ Everything below is free and open source: Docker, Caddy (HTTPS), Cloudflare Tunn
 
 ---
 
+## No card, no server: your own computer + Tailscale (most private)
+
+Every big cloud asks for a card. If you'd rather not, keep the Brain on your own computer and reach it from your phone privately:
+
+1. Install the **desktop app** (or run `start.bat` / `start.sh`).
+2. Install **Tailscale** (free, sign in with Google; no card) on that computer and on your phone: https://tailscale.com/download
+3. In the Brain: **Master → Use from my phone**: set a phone password (10+ characters) and switch it on.
+4. On the phone, open the address it shows (`http://100.x.y.z:8766`) and sign in. For the microphone and "Add to Home Screen",
+   run `tailscale serve --bg 8765` once on the computer and use `https://<computer>.<tailnet>.ts.net` instead.
+
+The Brain listens only on the Tailscale address, so nothing on your Wi-Fi or the internet can reach it, and it still asks for the
+password. The computer has to be on. Back it up now and then: Master → Backup and restore.
+
 ## Option A: Oracle Cloud Always Free (recommended, always on, free)
 
 Oracle gives every account an always-free Arm server (2 CPU cores and 12 GB memory since 2026, plus 200 GB disk). The Brain needs under 1 GB. Signing up asks for a card to verify you; Always Free resources are not charged. Set a $1 budget alert anyway (Billing → Budgets) as a safety net.
