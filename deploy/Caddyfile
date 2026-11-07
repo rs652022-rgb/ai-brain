@@ -6,5 +6,8 @@
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
 		Referrer-Policy same-origin
+		X-Frame-Options DENY
+		Permissions-Policy "microphone=(self), camera=(self), geolocation=(self)"
+		-Server
 	}
 }

@@ -382,3 +382,43 @@ loaders.skills = async () => {
   });
   $("#tab-chat").prepend(bar);
 })();
+
+// ---------- Backup and restore (Master tab) ----------
+function buildBackup(box) {
+  box.append(card("Backup and restore", "Your whole Brain in one encrypted file: memories, chats, identity, skills, settings, jobs and vault. " +
+    "Keep it on Google Drive or a USB stick. Restoring it moves your Brain to another computer or server. Without the passphrase nobody can open it.",
+    el("div", { class: "mgrid" }, field("Passphrase (8+ characters, write it down)", input("bk-pass", "", "password"))),
+    el("div", { class: "row" },
+      el("button", { class: "primary", onclick: async () => {
+        const pass = $("#bk-pass").value;
+        if (pass.length < 8) return note("#bk-note", "Use at least 8 characters.", true);
+        note("#bk-note", "Making the backup…");
+        try {
+          const res = await fetch("/api/backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passphrase: pass }) });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
+          const url = URL.createObjectURL(await res.blob());
+          const a = el("a", { href: url, download: `ai-brain-backup-${new Date().toISOString().slice(0, 10)}.brainbackup` });
+          document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+          note("#bk-note", "Backup downloaded. Keep the file and the passphrase safe.");
+        } catch (e) { note("#bk-note", e.message, true); }
+      } }, "Download backup"),
+      el("label", { class: "button", style: "cursor:pointer" }, "Restore from a backup…",
+        el("input", { type: "file", accept: ".brainbackup", hidden: "", onchange: async (e) => {
+          const f = e.target.files[0]; e.target.value = "";
+          if (!f) return;
+          const pass = $("#bk-pass").value;
+          if (!pass) return note("#bk-note", "Type the backup's passphrase first.", true);
+          if (!confirm("Replace this Brain with the backup? A copy of the current one is kept on this computer just in case.")) return;
+          note("#bk-note", "Restoring…");
+          const fd = new FormData(); fd.append("file", f);
+          try {
+            const res = await fetch("/api/backup/restore", { method: "POST", headers: { "X-Backup-Passphrase": pass }, body: fd });
+            const r = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(r.detail || `Error ${res.status}`);
+            note("#bk-note", `Restored ${r.files} files. Reloading…`); setTimeout(() => location.reload(), 1500);
+          } catch (err) { note("#bk-note", err.message, true); }
+        } }))),
+    noteEl("bk-note")));
+}
+const _mLoad = loaders.master;
+loaders.master = async () => { await _mLoad(); once("#tab-master", "backup-box", buildBackup); };

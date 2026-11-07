@@ -2606,3 +2606,33 @@ def channel_register_webhook(channel: str, request: Request):
         return {"result": channels_extra.register_webhook(channel, url)}
     except Exception as exc:
         _err(exc)
+
+
+# ---------- Backup and restore ----------
+
+class BackupIn(BaseModel):
+    passphrase: str
+
+
+@app.post("/api/backup")
+def backup_make(body: BackupIn, request: Request):
+    from . import backup
+    _need_master(request)
+    try:
+        data = backup.make(body.passphrase)
+    except backup.BackupError as exc:
+        _err(exc)
+    name = f"ai-brain-backup-{time.strftime('%Y-%m-%d')}.brainbackup"
+    return Response(data, media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/backup/restore")
+async def backup_restore(file: UploadFile, request: Request):
+    from . import backup
+    _need_master(request)
+    passphrase = request.headers.get("x-backup-passphrase", "")
+    blob = await file.read()
+    try:
+        return await asyncio.to_thread(backup.restore, blob, passphrase)
+    except backup.BackupError as exc:
+        _err(exc)

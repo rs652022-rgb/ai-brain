@@ -294,3 +294,25 @@ def test_housekeeping_uses_freellmapi_fast_pool(x):
     assert x.llm.light() == ("freellmapi", "auto:fast")
     data = x.settings.load(); data["light_model"] = ""; x.settings.save(data)
     assert x.llm.light() is None
+
+
+def test_encrypted_backup_restores_memories_and_vault(x):
+    from brain import backup, memory
+    memory.add("I prefer morning meetings", type="semantic", auto_tag=False)
+    x.vault.save("github", "github.com", value="pw-123456", username="me")
+    r = x.c.post("/api/backup", json={"passphrase": "correct horse"})
+    assert r.status_code == 200
+    blob = r.content
+    assert blob.startswith(backup.MAGIC) and b"morning meetings" not in blob and b"pw-123456" not in blob
+    memory.add("a newer memory", type="semantic", auto_tag=False)
+    bad = x.c.post("/api/backup/restore", files={"file": ("b.brainbackup", blob)}, headers={"X-Backup-Passphrase": "wrong pass"})
+    assert bad.status_code == 400 and "passphrase" in bad.json()["detail"]
+    (x.tmp / ".vault.key").unlink()                     # like a brand-new computer: a different vault key
+    x.vault._fernet()
+    ok = x.c.post("/api/backup/restore", files={"file": ("b.brainbackup", blob)}, headers={"X-Backup-Passphrase": "correct horse"})
+    assert ok.status_code == 200, ok.text
+    contents = [m["content"] for m in memory.list_all()]
+    assert "I prefer morning meetings" in contents and "a newer memory" not in contents
+    assert x.vault.resolve("{{secret:github}}", "https://github.com/")[0] == "pw-123456"
+    with pytest.raises(backup.BackupError):
+        backup.make("short")

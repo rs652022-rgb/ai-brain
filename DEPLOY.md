@@ -9,32 +9,29 @@ The same code runs in two ways:
 | Accounts | None | Sign up / log in; each person gets a private Brain |
 | Device control | Directly | Through the **Brain Companion** app on each user's computer |
 
-Everything below is free and open source: Docker, Caddy (HTTPS), Cloudflare Tunnel, Oracle Cloud's Always Free server, and DuckDNS (free web address). Each user adds their own free AI key (Gemini, Groq…), so the AI costs you nothing.
+Everything below is free and open source: Docker, Caddy (HTTPS), Cloudflare Tunnel, Oracle Cloud's Always Free server, and DuckDNS (free web address). Nothing here needs a subscription. Each user adds their own free AI key (Gemini, Groq…), so the AI costs you nothing.
 
 ---
 
-## Option A: Oracle Cloud Always Free (recommended, always on, free forever)
+## Option A: Oracle Cloud Always Free (recommended, always on, free)
 
-Oracle gives every account a free server (up to 4 CPU cores and 24 GB memory) with no time limit. Signing up asks for a card to verify you, but Always Free resources are never charged.
+Oracle gives every account an always-free Arm server (2 CPU cores and 12 GB memory since 2026, plus 200 GB disk). The Brain needs under 1 GB. Signing up asks for a card to verify you; Always Free resources are not charged. Set a $1 budget alert anyway (Billing → Budgets) as a safety net.
 
 1. **Create the server**
    - Sign up at https://www.oracle.com/cloud/free/ and pick a home region close to you (for example Mumbai or Hyderabad).
-   - Go to Compute → Instances → **Create instance**. Choose Image **Ubuntu 22.04** and Shape **Ampere A1** (1 OCPU and 6 GB is plenty). Download the SSH key it offers.
-   - Open the instance → Subnet → Security list → **Add ingress rules** for TCP ports **80** and **443** from `0.0.0.0/0`.
-2. **Get a free web address**
-   - Log in at https://www.duckdns.org with Google or GitHub.
-   - Create a name such as `rahulbrain` and set its IP to your server's **public IP**.
-   - Your address is now `rahulbrain.duckdns.org`.
-3. **Install Docker and the Brain.** Connect with `ssh -i key.pem ubuntu@YOUR_IP`, then run:
+   - Compute → Instances → **Create instance**. Image **Ubuntu 24.04**, shape **VM.Standard.A1.Flex** with **1 OCPU and 6 GB** (well inside the free limit). Download the SSH key it offers. If it says "out of capacity", try again later or pick another availability domain.
+   - Open the instance → Subnet → Security list → **Add ingress rules**: TCP ports **80** and **443** from `0.0.0.0/0`.
+2. **Get a free web address:** log in at https://www.duckdns.org with Google or GitHub, create a name such as `rahulbrain` and set its IP to your server's **public IP**. Copy your DuckDNS token from the same page.
+3. **Install everything with one command.** Connect with `ssh -i key.pem ubuntu@YOUR_IP` and run:
    ```bash
-   sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT && sudo netfilter-persistent save
-   curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
-   git clone https://github.com/YOUR_GITHUB/ai-brain.git && cd ai-brain
-   cp deploy/env.server.example .env.server && nano .env.server     # set BRAIN_DOMAIN=rahulbrain.duckdns.org
-   docker compose --profile https up -d --build
+   curl -fsSL https://raw.githubusercontent.com/rs652022-rgb/ai-brain/main/deploy/install.sh | bash
    ```
-   For a private repository, make a token at GitHub → Settings → Developer settings → Fine-grained tokens (read-only "Contents" on this repo) and clone with `git clone https://YOUR_TOKEN@github.com/YOUR_GITHUB/ai-brain.git`.
-4. **Open `https://rahulbrain.duckdns.org`** and sign up. **The first account becomes the admin.** HTTPS is set up automatically by Caddy.
+   It asks for your web address and DuckDNS token, then sets up: automatic security updates, a firewall (only SSH, 80, 443), fail2ban, Docker, the Brain with automatic HTTPS, FreeLLMAPI, closed sign-ups, nightly snapshots (14 days) and weekly updates.
+4. **Open `https://rahulbrain.duckdns.org`** and sign up. **The first account becomes the admin**; nobody else can sign up unless you open sign-ups in Admin.
+5. **Free models:** follow the last lines the installer prints to add your free provider keys to FreeLLMAPI once; every Brain on the server then uses them.
+6. **Keep a copy elsewhere:** Master → Backup and restore → Download backup (encrypted with your passphrase). Restore it on any other server, your laptop or the desktop app to move your Brain.
+
+**Google Cloud instead:** the free `e2-micro` (1 GB memory, 30 GB disk, US regions only) works the same way: create an Ubuntu VM in us-west1, us-central1 or us-east1, allow HTTP and HTTPS traffic, then run the same install command.
 
 ## Option B: your own laptop or PC + Cloudflare Tunnel (quickest)
 
