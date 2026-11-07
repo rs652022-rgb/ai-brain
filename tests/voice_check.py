@@ -33,5 +33,16 @@ for wake, sentence, expect in [("hey brain", "hey brain. what time is it", "time
         Listener(work, lambda t: heard.append(t) or "ok", [wake], "en").run_on_audio(w.readframes(w.getnframes()))
     print("  without wake word:", heard)
     results.append(not heard)
+# what the offline model writes for the custom phrase, and its dictionary
+import json, vosk  # noqa: E401
+from brain.listener import model_path
+mp = model_path(work, "en")
+print("model files:", sorted(str(p.relative_to(mp)) for p in mp.rglob("*") if p.is_file())[:40])
+subprocess.run(["espeak-ng", "-s", "140", "-w", str(wav), "hey jarvis, open the calculator"], check=True)
+subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-ar", "16000", "-ac", "1", str(work / "16k.wav")], check=True)
+rec = vosk.KaldiRecognizer(vosk.Model(str(mp)), 16000)
+with wave.open(str(work / "16k.wav")) as w:
+    rec.AcceptWaveform(w.readframes(w.getnframes()))
+print("raw transcript:", json.loads(rec.FinalResult()))
 print("PASS" if all(results) else "FAIL", results)
 sys.exit(0 if all(results) else 1)
