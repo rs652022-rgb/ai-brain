@@ -176,7 +176,8 @@ def apply_listen(msg: dict) -> None:
     if not listener.installed():
         say("Activation word needs: pip install vosk sounddevice pyttsx3")
         return
-    lis = listener.Listener(APP_DIR, _voice_handler, msg.get("wake_words") or ["hey brain"], msg.get("lang", "en"), on_state=_report)
+    lis = listener.Listener(APP_DIR, _voice_handler, msg.get("wake_words") or ["hey brain"], msg.get("lang", "en"),
+                            on_state=_report, aliases=msg.get("aliases") or [])
     VOICE["listener"] = lis
     lis.start()
     say(f"Listening for \"{(msg.get('wake_words') or ['hey brain'])[0]}\".")

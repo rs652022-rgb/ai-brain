@@ -55,7 +55,7 @@ subprocess.run(["espeak-ng", "-s", "140", "-w", str(wav), "hey jarvis, open the 
 subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-ar", "16000", "-ac", "1", str(work / "16k.wav")], check=True)
 heard = []
 with wave.open(str(work / "16k.wav")) as w:
-    Listener(work, lambda t: heard.append(t) or "ok", ["hey jarvis", learned], "en").run_on_audio(b"\0" * 32000 + w.readframes(w.getnframes()))
+    Listener(work, lambda t: heard.append(t) or "ok", ["hey jarvis"], "en", aliases=[learned]).run_on_audio(b"\0" * 32000 + w.readframes(w.getnframes()))
 print("after learning, heard:", heard)
 results[2] = bool(heard) and "calculator" in heard[0]
 print("PASS" if all(results) else "FAIL", results)

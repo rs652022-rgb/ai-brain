@@ -78,9 +78,10 @@ def _norm(text: str) -> str:
 class Listener:
     """state: off | loading | waiting (for the wake word) | listening (to a command) | thinking | speaking"""
 
-    def __init__(self, base: Path, handler, wake_words: list[str], lang: str = "en", on_state=None):
+    def __init__(self, base: Path, handler, wake_words: list[str], lang: str = "en", on_state=None, aliases=None):
         self.base, self.handler, self.lang = base, handler, lang
         self.wake_words = [w for w in (_norm(x) for x in wake_words) if w] or ["hey brain"]
+        self.aliases = [a for a in (_norm(x) for x in (aliases or [])) if a and a not in self.wake_words]
         self.on_state = on_state or (lambda s, t="": None)
         self.state, self.last_heard, self.last_reply, self.error = "off", "", "", ""
         self._stop = threading.Event()
@@ -207,12 +208,24 @@ class Listener:
     def _wake_split(self, text: str) -> tuple[bool, str]:
         """(heard the activation word?, what was said after it). Exact words only, so everyday talk
         ("the brain is…") never wakes it."""
+        import difflib
         words = text.split()
         for w in self.wake_words:
             ws = w.split()
             for i in range(0, len(words) - len(ws) + 1):
                 if words[i:i + len(ws)] == ws:
                     return True, " ".join(words[i + len(ws):])
+        # Learned spellings of an unusual name vary a little each time ("a job is" / "a job this"):
+        # compare the start of what was said, allowing small differences.
+        for a in self.aliases:
+            n = len(a.split())
+            for size in (n, n - 1, n + 1):
+                if size < 1 or size > len(words):
+                    continue
+                for i in range(0, min(3, len(words) - size + 1)):
+                    chunk = " ".join(words[i:i + size])
+                    if difflib.SequenceMatcher(None, chunk, a).ratio() >= 0.75:
+                        return True, " ".join(words[i + size:])
         return False, ""
 
     def _loop(self, model, rec, audio: queue.Queue) -> None:
@@ -358,7 +371,8 @@ def local_set(enabled: bool, lang: str = "en") -> dict:
     if enabled:
         if not installed():
             raise RuntimeError("Voice packages aren't installed: pip install vosk sounddevice pyttsx3 (the desktop app has them).")
-        lis = Listener(config.ROOT_DATA, _local_handler, wake_list(), lang)
+        lis = Listener(config.ROOT_DATA, _local_handler, master.get().get("wake_words") or ["hey brain"], lang,
+                       aliases=learned())
         _local["listener"] = lis
         lis.start()
     return local_status()
@@ -380,7 +394,8 @@ def companion_settings() -> dict:
     """What the Brain Companion on the user's computer needs to listen (sent when it connects or this changes)."""
     from . import master, settings
     c = settings.load().get("listener") or {}
-    return {"type": "listen", "enabled": bool(c.get("enabled")), "lang": c.get("lang", "en"), "wake_words": wake_list()}
+    return {"type": "listen", "enabled": bool(c.get("enabled")), "lang": c.get("lang", "en"),
+            "wake_words": master.get().get("wake_words") or ["hey brain"], "aliases": learned()}
 
 
 def tell_companion() -> None:
@@ -403,6 +418,11 @@ def restart_if_running() -> None:
     c = settings.load().get("listener") or {}
     if c.get("enabled") and _local["listener"]:
         local_set(True, c.get("lang", "en"))
+
+
+def learned() -> list[str]:
+    from . import settings
+    return list((settings.load().get("listener") or {}).get("heard_as") or [])
 
 
 def wake_list() -> list[str]:

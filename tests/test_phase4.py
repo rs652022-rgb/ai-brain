@@ -402,8 +402,9 @@ def test_listener_learns_custom_activation_words(x):
     x.mp.setattr(listener.Listener, "transcribe", lambda self, pcm: "a job is")
     assert listener.learn(b"\0\0")["added"]
     assert listener.wake_list() == ["hey jarvis", "a job is"]
-    lis = listener.Listener(x.tmp, None, listener.wake_list())
+    lis = listener.Listener(x.tmp, None, ["hey jarvis"], aliases=listener.learned())
     assert lis._wake_split("a job is open the calculator") == (True, "open the calculator")
+    assert lis._wake_split("a job this open the calculator") == (True, "open the calculator")
     assert lis._wake_split("the brain is big") == (False, "")
     x.mp.setattr(listener.Listener, "transcribe", lambda self, pcm: "hi")
     assert not listener.learn(b"\0\0")["added"]                  # too short: would wake on everyday talk
