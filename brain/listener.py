@@ -437,7 +437,7 @@ def learn(pcm: bytes | None = None) -> dict:
     so even names it doesn't know wake it up."""
     from . import config, db, master, settings
     if config.MULTIUSER:
-        raise RuntimeError("Teach it on the Brain Companion's computer (coming from the tray menu).")
+        raise RuntimeError("On a server, teach it from the Brain Companion's tray menu on your computer.")
     c = settings.load().get("listener") or {}
     lis = _local["listener"]
     was_on = bool(lis)
@@ -476,3 +476,19 @@ def forget_learned() -> None:
     data["listener"] = lc
     settings.save(data)
     restart_if_running()
+
+
+def save_learned(heard: str) -> bool:
+    """From the Brain Companion: how its offline model hears the activation word."""
+    from . import master, settings
+    heard = _norm(heard)[:60]
+    if not heard or heard in [_norm(w) for w in master.get().get("wake_words") or []] or (len(heard.split()) < 2 and len(heard) < 6):
+        tell_companion()
+        return False
+    data = settings.load()
+    lc = data.get("listener") or {}
+    lc["heard_as"] = list(dict.fromkeys((lc.get("heard_as") or []) + [heard]))[-6:]
+    data["listener"] = lc
+    settings.save(data)
+    tell_companion()
+    return True

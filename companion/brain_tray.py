@@ -105,6 +105,7 @@ def main() -> None:
         pystray.MenuItem(lambda _i: "Activation word: " + {"off": "off", "waiting": "listening", "listening": "hearing you…",
                                                            "thinking": "working…", "speaking": "answering…", "loading": "starting…"}.get(bc.STATE.get("listening", "off"), "on"),
                          None, enabled=False),
+        pystray.MenuItem("Teach my activation word (say it after clicking)", lambda icon, _i: threading.Thread(target=bc.teach, daemon=True).start()),
         pystray.MenuItem("Pause listening", lambda icon, _i: (bc.set_paused(not bc.VOICE["paused"]), refresh(icon)),
                          checked=lambda _i: bc.VOICE["paused"]),
         pystray.Menu.SEPARATOR,

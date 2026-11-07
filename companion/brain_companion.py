@@ -183,6 +183,27 @@ def apply_listen(msg: dict) -> None:
     say(f"Listening for \"{(msg.get('wake_words') or ['hey brain'])[0]}\".")
 
 
+def teach() -> str:
+    """Say the activation word once: the Brain remembers how this computer's offline model hears it."""
+    from brain import listener
+    msg = VOICE["settings"] or {}
+    lis = VOICE["listener"]
+    if lis:
+        lis.stop()
+        time.sleep(0.6)
+    helper = listener.Listener(APP_DIR, None, msg.get("wake_words") or ["hey brain"], msg.get("lang", "en"))
+    say("Say your activation word now…")
+    heard = helper.transcribe(helper.record())
+    ws, lock = VOICE["ws"], VOICE["lock"]
+    if heard and ws:
+        with lock:
+            ws.send(json.dumps({"type": "learned", "heard": heard}))
+    else:
+        apply_listen(msg)
+    say(f'Heard: "{heard}"' if heard else "Didn't hear anything.")
+    return heard
+
+
 def set_paused(paused: bool) -> None:
     VOICE["paused"] = paused
     apply_listen(VOICE["settings"] or {})

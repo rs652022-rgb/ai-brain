@@ -1029,6 +1029,13 @@ async def companion_ws(ws: WebSocket):
             if msg.get("type") == "voice" and str(msg.get("text", "")).strip():
                 threading.Thread(target=voice, args=(msg,), daemon=True).start()
                 continue
+            if msg.get("type") == "learned":
+                t2 = config.use_dir(accounts.prepare(user))
+                try:
+                    await asyncio.to_thread(listener.save_learned, str(msg.get("heard", "")))
+                finally:
+                    config.reset_dir(t2)
+                continue
             if msg.get("type") == "listener":
                 conn.info.update(listener_state=str(msg.get("state", ""))[:20], listener_heard=str(msg.get("heard", ""))[:200])
                 continue
@@ -2894,3 +2901,11 @@ def listener_forget(request: Request):
     _need_master(request)
     listener.forget_learned()
     return {"ok": True}
+
+
+
+@app.get("/api/phone/config")
+def phone_config():
+    """What the phone app needs: the activation words (Master → Wake words) and language."""
+    c = settings.load().get("listener") or {}
+    return {"wake_words": master.get().get("wake_words") or ["hey brain"], "lang": c.get("lang", "en")}

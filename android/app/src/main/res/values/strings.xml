@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Brain</string>
+    <string name="settings_name">Brain settings</string>
+    <string name="control_description">Lets your Brain read the screen and tap, swipe, type, go Back or Home, and open apps, only for tasks you give it by voice or in the Brain app. Calls, messages and deleting wait for your approval. It never types passwords, OTPs or card numbers. Switch it off here any time.</string>
+</resources>
