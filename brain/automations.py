@@ -26,11 +26,12 @@ class ScheduleError(ValueError):
     pass
 
 
-def _tz(name: str) -> ZoneInfo:
+def _tz(name: str):
     try:
         return ZoneInfo(name or "UTC")
     except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo("UTC")
+        import datetime as _dt
+        return _dt.timezone.utc            # Windows without the tzdata package has no time zone database
 
 
 # ---------- Understanding "when" ----------
