@@ -142,14 +142,9 @@ class Listener:
         if not path:
             path = download_model(self.base, self.lang)
         model = vosk.Model(str(path))
-        words = sorted({w for phrase in self.wake_words + list(STOP_WORDS) for w in phrase.split()})
-        vocab_file = next((f for f in (path / "graph" / "words.txt", path / "words.txt") if f.exists()), None)
-        vocab = {line.split()[0] for line in vocab_file.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()} if vocab_file else set()
-        if vocab and all(w in vocab for w in words):    # a small word list: fewer false wake-ups, less CPU
-            wake_rec = vosk.KaldiRecognizer(model, RATE, json.dumps(words + ["[unk]"]))
-        else:                                           # unusual names ("Jarvis"): recognise freely
-            wake_rec = vosk.KaldiRecognizer(model, RATE)
-        return model, wake_rec
+        # One recogniser hears everything, so the words right after the activation word are never lost
+        # ("hey brain what time is it" in one breath works, and so does a pause after "hey brain").
+        return model, vosk.KaldiRecognizer(model, RATE)
 
     def _run(self) -> None:
         try:
@@ -190,40 +185,81 @@ class Listener:
         audio: queue.Queue = queue.Queue()
         for i in range(0, len(pcm), 8000):
             audio.put(pcm[i:i + 8000])
-        audio.put(b"\0" * RATE * 4)                    # 2 s of silence at the end
+        for _ in range(8):                              # 2 s of silence at the end
+            audio.put(b"\0" * 8000)
         self._file_mode = True
         self._loop(model, wake_rec, audio)
 
-    def _loop(self, model, wake_rec, audio: queue.Queue) -> None:
+    def _wake_split(self, text: str) -> tuple[bool, str]:
+        """(heard the activation word?, what was said after it). Exact words only, so everyday talk
+        ("the brain is…") never wakes it."""
+        words = text.split()
+        for w in self.wake_words:
+            ws = w.split()
+            for i in range(0, len(words) - len(ws) + 1):
+                if words[i:i + len(ws)] == ws:
+                    return True, " ".join(words[i + len(ws):])
+        return False, ""
+
+    def _loop(self, model, rec, audio: queue.Queue) -> None:
         self._set("waiting")
         file_mode = getattr(self, "_file_mode", False)
+        woke = False
         while not self._stop.is_set():
             try:
                 data = audio.get(timeout=0.5)
             except queue.Empty:
                 if file_mode:
-                    return
+                    data = None
+                else:
+                    continue
+            final = data is None or rec.AcceptWaveform(data)
+            heard = _norm(json.loads(rec.FinalResult() if data is None else rec.Result()).get("text", "") if final
+                          else json.loads(rec.PartialResult()).get("partial", ""))
+            if self._speaking.is_set():
+                if heard and any(w in heard.split() for w in STOP_WORDS):
+                    self._interrupt()
+                    rec.Reset()
                 continue
-            if wake_rec.AcceptWaveform(data):
-                heard = _norm(json.loads(wake_rec.Result()).get("text", ""))
-            else:
-                heard = _norm(json.loads(wake_rec.PartialResult()).get("partial", ""))
-            if not heard:
-                continue
-            if self._speaking.is_set() and any(w in heard.split() for w in STOP_WORDS):
-                self._interrupt()
-                wake_rec.Reset()
-                continue
-            for w in self.wake_words:
-                if w in heard and not self._speaking.is_set():
-                    after = heard.split(w, 1)[1].strip()          # words already said after the wake word
-                    wake_rec.Reset()
-                    self._command(model, audio, after)
+            hit, after = self._wake_split(heard)
+            if hit and not final and not woke:
+                woke = True                               # the user hears the beep while still speaking
+                self._set("listening")
+                if not file_mode:
+                    self._beep()
+            if final:
+                if hit:
+                    woke = False
+                    rec.Reset()
+                    if after:
+                        self._handle(after)
+                    else:                                 # "hey brain" ... (pause) ... "open chrome"
+                        self._command(model, audio)
                     if not file_mode:
-                        while not audio.empty():                  # don't react to our own voice
+                        while not audio.empty():          # don't react to our own voice
                             audio.get_nowait()
                     self._set("waiting")
-                    break
+                elif woke:
+                    woke = False
+                    self._set("waiting")
+            if data is None:
+                return
+
+    def _handle(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        self.last_heard = text
+        self._set("thinking", text)
+        try:
+            reply = self.handler(text)
+        except Exception as exc:
+            reply = f"Sorry, {exc}"
+        self.last_reply = reply or ""
+        if reply and not getattr(self, "_file_mode", False):
+            # speak in the background so "stop" can interrupt it
+            threading.Thread(target=self.speak, args=(reply,), daemon=True).start()
+            time.sleep(0.3)
 
     def _interrupt(self) -> None:
         try:
@@ -232,14 +268,13 @@ class Listener:
         except Exception:
             pass
 
-    def _command(self, model, audio: queue.Queue, already: str = "") -> None:
+    def _command(self, model, audio: queue.Queue) -> None:
+        """After a bare activation word: listen to the next thing said (up to 15 s)."""
         import vosk
         self._set("listening")
         file_mode = getattr(self, "_file_mode", False)
-        if not file_mode:
-            self._beep()
         rec = vosk.KaldiRecognizer(model, RATE)
-        text, started, last_voice = already, time.time(), time.time()
+        text, started, last_voice = "", time.time(), time.time()
         while time.time() - started < 15 and not self._stop.is_set():
             try:
                 data = audio.get(timeout=0.5)
@@ -259,20 +294,8 @@ class Listener:
             elif not text and time.time() - started > 6:
                 break                                   # nothing said after the wake word
         text = (text + " " + json.loads(rec.FinalResult()).get("text", "")).strip()
-        for w in self.wake_words:                       # "hey brain open chrome" -> "open chrome"
-            text = re.sub(rf"^\s*{re.escape(w)}\b", "", text).strip()
-        if not text:
-            self._set("waiting")
-            return
-        self.last_heard = text
-        self._set("thinking", text)
-        try:
-            reply = self.handler(text)
-        except Exception as exc:
-            reply = f"Sorry, {exc}"
-        self.last_reply = reply or ""
-        if reply and not file_mode:
-            self.speak(reply)
+        hit, after = self._wake_split(text)
+        self._handle(after if hit else text)
 
 
 # ---------- The laptop Brain's own listener (desktop app, start.bat/start.sh) ----------

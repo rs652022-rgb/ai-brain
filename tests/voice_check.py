@@ -13,7 +13,7 @@ from brain.listener import Listener  # noqa: E402
 
 work = Path(tempfile.mkdtemp())
 results = []
-for wake, sentence, expect in [("hey brain", "hey brain, what time is it", "time"),
+for wake, sentence, expect in [("hey brain", "hey brain. what time is it", "time"),
                                ("hey jarvis", "hey jarvis, open the calculator", "calculator")]:
     wav = work / "say.wav"
     subprocess.run(["espeak-ng", "-s", "140", "-w", str(wav), sentence], check=True)
