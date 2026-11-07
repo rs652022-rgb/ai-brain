@@ -201,6 +201,14 @@ WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be 
 
 **Skill marketplace.** Search ClawHub (OpenClaw's public skill registry, flagged skills hidden) and add skills; they arrive as "suggested" for you to read first. On a shared server people can publish skills to the server's shelf; the admin approves them.
 
+**Like Siri: always listening for your activation word.**
+- **Laptop** (desktop app, or the tray app for a server Brain): Settings → Activation word. Speech is understood offline on the computer; it then does what you say, including controlling the computer.
+- **Android** (the Brain app): listens all the time, controls the phone through Accessibility (read the screen, tap, type, open apps), and works offline for common things (apps, calls, messages, alarms, timers, torch). See `mobile/README.md`.
+- **iPhone**: "Hey Siri, Ask Brain" through a Shortcut (Apple doesn't allow more).
+- Choose your own activation word in Master → Wake words; "Teach it my activation word" helps with unusual names.
+
+**Works offline.** With no internet the laptop answers with a free model on the computer (Settings → Offline AI, uses Ollama), and the phone handles common commands itself and saves the rest for later.
+
 **Use from my phone.** Keep the Brain on your own computer and open it from your phone over Tailscale (free, private): it listens only on your Tailscale address and asks for a password. Master → Use from my phone.
 
 **Backup and restore.** Your whole Brain in one passphrase-encrypted file, to keep safe or move to another computer or server. Master → Backup and restore.
