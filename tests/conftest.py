@@ -4,6 +4,7 @@ import pytest
 
 # The tests use a fixed owner name; the app itself starts with none and asks for it.
 os.environ.setdefault("BRAIN_OWNER_NAME", "Rahul Sharma")
+os.environ.setdefault("BRAIN_ASSUME_ONLINE", "1")      # tests never depend on the real network
 
 
 @pytest.fixture(autouse=True)

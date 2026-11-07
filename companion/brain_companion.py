@@ -31,7 +31,7 @@ VERSION = "1.0"
 from brain import control, devices  # noqa: E402  (after the path setup above)
 
 # Shared with the menu-bar / tray app (brain_tray.py)
-STATE = {"connected": False, "paused": False, "text": "Starting…", "user": "", "last": ""}
+STATE = {"connected": False, "paused": False, "text": "Starting…", "user": "", "last": "", "listening": "off"}
 
 
 def load_cfg() -> dict:
@@ -122,6 +122,71 @@ def handle(msg: dict) -> dict:
         return {"id": msg.get("id"), "ok": False, "error": str(exc)[:500]}
 
 
+# ---------- Activation word: the companion listens on this computer, the Brain on the web answers ----------
+
+VOICE = {"listener": None, "ws": None, "lock": None, "pending": {}, "paused": False, "settings": {}}
+
+
+def _voice_handler(text: str) -> str:
+    import uuid
+    ws, lock = VOICE["ws"], VOICE["lock"]
+    if not ws:
+        return "I can't reach your Brain right now. Check the internet connection."
+    vid = uuid.uuid4().hex
+    slot = [threading.Event(), ""]
+    VOICE["pending"][vid] = slot
+    try:
+        with lock:
+            ws.send(json.dumps({"type": "voice", "id": vid, "text": text}))
+        if not slot[0].wait(180):
+            return "Your Brain didn't answer in time."
+        return slot[1]
+    finally:
+        VOICE["pending"].pop(vid, None)
+
+
+def _report(state: str, text: str = "") -> None:
+    STATE["listening"] = state
+    ws, lock = VOICE["ws"], VOICE["lock"]
+    if ws and lock:
+        try:
+            with lock:
+                ws.send(json.dumps({"type": "listener", "state": state, "heard": text if state == "thinking" else ""}))
+        except Exception:
+            pass
+    if state in ("listening", "thinking"):
+        say(f"🎤 {'Listening…' if state == 'listening' else 'You said: ' + text}")
+
+
+def apply_listen(msg: dict) -> None:
+    """Start, stop or update listening as set in the Brain (Settings → Activation word)."""
+    VOICE["settings"] = msg
+    old = VOICE["listener"]
+    if old:
+        old.stop()
+        VOICE["listener"] = None
+    if not msg.get("enabled") or VOICE["paused"]:
+        STATE["listening"] = "off"
+        return
+    try:
+        from brain import listener
+    except Exception as exc:
+        say(f"Activation word isn't available: {exc}")
+        return
+    if not listener.installed():
+        say("Activation word needs: pip install vosk sounddevice pyttsx3")
+        return
+    lis = listener.Listener(APP_DIR, _voice_handler, msg.get("wake_words") or ["hey brain"], msg.get("lang", "en"), on_state=_report)
+    VOICE["listener"] = lis
+    lis.start()
+    say(f"Listening for \"{(msg.get('wake_words') or ['hey brain'])[0]}\".")
+
+
+def set_paused(paused: bool) -> None:
+    VOICE["paused"] = paused
+    apply_listen(VOICE["settings"] or {})
+
+
 def serve(cfg: dict) -> None:
     from websockets.sync.client import connect
     ws_url = cfg["server"].replace("https://", "wss://", 1).replace("http://", "ws://", 1) + "/api/companion/ws"
@@ -131,8 +196,18 @@ def serve(cfg: dict) -> None:
             with connect(ws_url, open_timeout=20, max_size=40 * 1024 * 1024, ping_interval=25) as ws:
                 ws.send(json.dumps({"type": "hello", "token": cfg["token"], **status()}))
                 lock = threading.Lock()
+                VOICE.update(ws=ws, lock=lock)
                 for raw in ws:
                     msg = json.loads(raw)
+                    if msg.get("type") == "listen":
+                        threading.Thread(target=apply_listen, args=(msg,), daemon=True).start()
+                        continue
+                    if msg.get("type") == "voice_reply":
+                        slot = VOICE["pending"].get(str(msg.get("id")))
+                        if slot:
+                            slot[1] = str(msg.get("text", ""))
+                            slot[0].set()
+                        continue
                     if msg.get("type") == "welcome":
                         delay = 2
                         STATE.update(connected=True, user=msg["user"], text=f"Connected to {msg['user']}'s Brain")
@@ -157,6 +232,7 @@ def serve(cfg: dict) -> None:
         except KeyboardInterrupt:
             raise
         except Exception as exc:
+            VOICE.update(ws=None, lock=None)
             STATE.update(connected=False, text="Not connected, retrying…")
             say(f"Not connected ({exc.__class__.__name__}: {str(exc)[:120]}). Retrying in {delay}s…")
             time.sleep(delay)

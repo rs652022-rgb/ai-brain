@@ -254,7 +254,51 @@ def _with_images(kind: str, messages: list[dict]) -> list[dict]:
 
 # ---------- Routing with fallback ----------
 
+_net = {"at": 0.0, "ok": True}
+
+
+def online() -> bool:
+    """Is there internet? Checked at most every 20 seconds, in under a second. Offline, the Brain goes
+    straight to the model on this computer (Ollama) instead of waiting for cloud models to time out."""
+    import os
+    import socket
+    if os.environ.get("BRAIN_ASSUME_ONLINE") == "1":
+        return True
+    now = time.time()
+    if now - _net["at"] < 20:
+        return _net["ok"]
+    ok = False
+    for host in ("1.1.1.1", "8.8.8.8"):
+        try:
+            socket.create_connection((host, 443), timeout=0.8).close()
+            ok = True
+            break
+        except OSError:
+            continue
+    if not ok and os.environ.get("HTTPS_PROXY"):
+        ok = True                                  # behind a proxy the direct check can't tell: assume online
+    _net.update(at=now, ok=ok)
+    return ok
+
+
+def _local_provider(p: dict) -> bool:
+    """Ollama, or a model server on this computer (LM Studio, llama.cpp). FreeLLMAPI runs locally but needs internet."""
+    m = re.match(r"^\w+://([^/:]+)", p.get("base_url", ""))
+    host = m.group(1) if m else ""
+    return p["id"] == "ollama" or (p["id"] != "freellmapi" and host in ("127.0.0.1", "localhost"))
+
+
 def _chain(only: list[str] | None = None, prefer: tuple[str, str] | None = None) -> list[dict]:
+    chain = _chain_all(only, prefer)
+    if chain and not online():
+        local = [p for p in chain if _local_provider(p)]
+        if not local and config.allow_private() and "ollama" not in [p["id"] for p in chain]:
+            local = [settings.resolved("ollama")]
+        return local
+    return chain
+
+
+def _chain_all(only: list[str] | None = None, prefer: tuple[str, str] | None = None) -> list[dict]:
     data = settings.load()
     order = only or data.get("order") or ["ollama"]
     if prefer and prefer[0] in PRESETS and not only:     # an agent's own model goes first, the usual order backs it up
@@ -306,6 +350,8 @@ def chat(system: str, messages: list[dict], private: bool = False, json_mode: bo
                 break
     if private:
         raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
+    if not errors and not online():
+        raise ModelUnavailable("You're offline, and there's no AI model on this computer. Settings → Offline AI sets one up (free).")
     if not errors:
         raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
     raise ModelUnavailable(friendly_failure(errors))
@@ -445,6 +491,8 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
                 break
     if private:
         raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
+    if not errors and not online():
+        raise ModelUnavailable("You're offline, and there's no AI model on this computer. Settings → Offline AI sets one up (free).")
     if not errors:
         raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
     raise ModelUnavailable(friendly_failure(errors))

@@ -1,0 +1,17 @@
+# Checks the offline activation-word listener with real (synthesised) speech.
+name: Voice check
+on:
+  workflow_dispatch:
+  push:
+    paths: ["brain/listener.py", "tests/voice_check.py"]
+jobs:
+  voice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg libportaudio2
+      - run: pip install -r requirements.txt vosk sounddevice
+      - run: python tests/voice_check.py

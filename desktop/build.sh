@@ -4,6 +4,8 @@ set -e
 cd "$(dirname "$0")/.."
 SEP=":"; [ "${OS:-}" = "Windows_NT" ] && SEP=";"
 ICON=""
+EXTRA=""
+python -c "import _sounddevice_data" 2>/dev/null && EXTRA="--collect-all _sounddevice_data"
 [ -f desktop/icon.ico ] && [ "${OS:-}" = "Windows_NT" ] && ICON="--icon desktop/icon.ico"
 [ -f desktop/icon.icns ] && [ "$(uname)" = "Darwin" ] && ICON="--icon desktop/icon.icns"
 pyinstaller --noconfirm --clean --windowed --name AIBrain $ICON --paths . \
@@ -13,5 +15,6 @@ pyinstaller --noconfirm --clean --windowed --name AIBrain $ICON --paths . \
   --collect-submodules webview --collect-data webview \
   --hidden-import brain.server \
   --hidden-import pyautogui --hidden-import pyperclip \
+  --collect-all vosk --hidden-import sounddevice $EXTRA --collect-submodules pyttsx3 \
   --osx-bundle-identifier com.aibrain.desktop \
   desktop/brain_desktop.py

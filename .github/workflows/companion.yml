@@ -35,16 +35,20 @@ jobs:
       - name: Build
         shell: bash
         run: |
+          SDDATA=""; python -c "import _sounddevice_data" 2>/dev/null && SDDATA="--collect-all _sounddevice_data"
           pyinstaller --onefile --name BrainCompanion --paths . \
             --hidden-import brain.devices --hidden-import brain.control --hidden-import brain.settings \
-            --hidden-import brain.providers --hidden-import brain.voice --hidden-import brain.web \
+            --hidden-import brain.providers --hidden-import brain.voice --hidden-import brain.web --hidden-import brain.listener \
+            --hidden-import vosk --collect-all vosk --hidden-import sounddevice $SDDATA --hidden-import pyttsx3 --collect-submodules pyttsx3 \
             --collect-submodules websockets companion/brain_companion.py
       - name: Build the menu-bar / tray app
         shell: bash
         run: |
+          SDDATA=""; python -c "import _sounddevice_data" 2>/dev/null && SDDATA="--collect-all _sounddevice_data"
           pyinstaller --onefile --windowed --name BrainTray --paths . --paths companion \
             --hidden-import brain.devices --hidden-import brain.control --hidden-import brain.settings \
-            --hidden-import brain.providers --hidden-import brain.voice --hidden-import brain.web \
+            --hidden-import brain.providers --hidden-import brain.voice --hidden-import brain.web --hidden-import brain.listener \
+            --hidden-import vosk --collect-all vosk --hidden-import sounddevice $SDDATA --hidden-import pyttsx3 --collect-submodules pyttsx3 \
             --hidden-import pystray --collect-submodules pystray --collect-submodules websockets \
             companion/brain_tray.py
       - name: Name the file
@@ -53,7 +57,9 @@ jobs:
           mkdir out
           case "${{ matrix.os }}" in
             windows-latest) cp dist/BrainCompanion.exe "out/${{ matrix.out }}"; cp dist/BrainTray.exe out/BrainTray-Windows.exe ;;
-            macos-latest)   (cd dist && zip -r "../out/${{ matrix.out }}" BrainCompanion && zip -r ../out/BrainTray-macOS.zip BrainTray.app) ;;
+            macos-latest)   plutil -insert NSMicrophoneUsageDescription -string "Brain listens for your activation word (offline)." dist/BrainTray.app/Contents/Info.plist
+                            codesign --force --deep -s - dist/BrainTray.app
+                            (cd dist && zip -r "../out/${{ matrix.out }}" BrainCompanion && zip -r ../out/BrainTray-macOS.zip BrainTray.app) ;;
             *)              cp dist/BrainCompanion "out/${{ matrix.out }}"; cp dist/BrainTray out/BrainTray-Linux ;;
           esac
       - uses: actions/upload-artifact@v4

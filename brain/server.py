@@ -97,6 +97,8 @@ async def lifespan(_app):
     if not config.MULTIUSER and config.os.environ.get("BRAIN_NO_SCHEDULER") != "1":
         from . import remote
         remote.watch()                # "Use from my phone": listens on the Tailscale address when switched on
+        from . import listener
+        listener.autostart()          # always listening for your activation word, if you switched it on
     db.audit("system", "startup", providers=settings.load().get("order", []))
     yield
 
@@ -153,7 +155,13 @@ async def _guard(request, call_next):
                 return JSONResponse(status_code=403, content={"detail": "Only this computer can use the Brain."})
             if origin and origin != "null" and _host_of(origin) != _host_of(host):
                 return JSONResponse(status_code=403, content={"detail": "Requests from other websites are not allowed."})
-            if path not in ("/api/remote/login", "/api/remote/state") and not remote.session_ok(request.cookies.get(remote.COOKIE)):
+            bearer_ok = False
+            bearer = (request.headers.get("authorization") or "")[7:].strip()
+            if bearer:                            # the phone app and Siri Shortcut use an API token instead of a cookie
+                found = accounts.token_user(bearer)
+                bearer_ok = bool(found) and found[0] is None
+            if (path not in ("/api/remote/login", "/api/remote/state") and not bearer_ok
+                    and not remote.session_ok(request.cookies.get(remote.COOKIE))):
                 return JSONResponse(status_code=401, content={"detail": "Sign in with your phone password.", "remote": True})
         if path not in OPEN_PATHS and master.get()["lock_app"]:
             if not master.session_ok(request.cookies.get(SESSION_COOKIE)):
@@ -358,6 +366,12 @@ def master_put(body: MasterIn, request: Request):
     _need_master(request)
     out = master.update(body.changes)
     db.audit("owner", "master.update", fields=sorted(k for k in body.changes if k in master.DEFAULTS))
+    if "wake_words" in body.changes:
+        from . import listener
+        try:
+            listener.restart_if_running()
+        except Exception:
+            pass
     return out | {"unlocked": True}
 
 
@@ -989,9 +1003,36 @@ async def companion_ws(ws: WebSocket):
     finally:
         config.reset_dir(tok)
     await ws.send_json({"type": "welcome", "user": user["name"], "device": device["name"]})
+    from . import listener
+    tok = config.use_dir(accounts.prepare(user))
+    try:
+        await ws.send_json(listener.companion_settings())
+    finally:
+        config.reset_dir(tok)
+    loop = asyncio.get_running_loop()
+
+    def voice(msg: dict) -> None:
+        """A command the companion heard after the activation word: one Brain turn, reply to speak."""
+        t = config.use_dir(accounts.prepare(user))
+        r = config.set_role(user["role"])
+        try:
+            reply = core.think(str(msg.get("text", ""))[:2000], mode="assistant", conversation="main", voice=True)["reply"]
+        except Exception as exc:
+            reply = f"Sorry, {str(exc).splitlines()[0]}"
+        finally:
+            config.reset_dir(t)
+            config._user_role.reset(r)
+        asyncio.run_coroutine_threadsafe(ws.send_json({"type": "voice_reply", "id": msg.get("id"), "text": reply}), loop)
     try:
         while True:
-            hub.deliver(conn, await ws.receive_json())
+            msg = await ws.receive_json()
+            if msg.get("type") == "voice" and str(msg.get("text", "")).strip():
+                threading.Thread(target=voice, args=(msg,), daemon=True).start()
+                continue
+            if msg.get("type") == "listener":
+                conn.info.update(listener_state=str(msg.get("state", ""))[:20], listener_heard=str(msg.get("heard", ""))[:200])
+                continue
+            hub.deliver(conn, msg)
     except Exception:
         pass
     finally:
@@ -2272,7 +2313,7 @@ def _companion_zip() -> bytes:
         files = ["companion/brain_companion.py", "companion/requirements.txt", "companion/start-companion.bat",
                  "companion/start-companion.sh", "companion/README.txt", "companion/brain_tray.py",
                  *[f"brain/{n}" for n in ("__init__.py", "config.py", "control.py", "devices.py", "settings.py",
-                                         "providers.py", "voice.py", "web.py")]]
+                                         "providers.py", "voice.py", "web.py", "listener.py")]]
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for f in files:
                 path = root / f
@@ -2719,3 +2760,119 @@ def remote_logout_all(request: Request):
     _need_master(request)
     remote.logout_all()
     return {"ok": True}
+
+
+# ---------- Offline AI (Ollama on this computer) ----------
+
+class OfflineIn(BaseModel):
+    model: str = "qwen2.5:3b"
+
+
+@app.get("/api/offline")
+def offline_get():
+    from . import offline
+    return offline.status()
+
+
+@app.post("/api/offline/pull")
+def offline_pull(body: OfflineIn, request: Request):
+    from . import offline
+    _need_master(request)
+    try:
+        return offline.pull(body.model)
+    except offline.OfflineError as exc:
+        _err(exc)
+
+
+# ---------- The phone app (Android): live link for phone control, and voice commands ----------
+
+@app.websocket("/api/phone/ws")
+async def phone_ws(ws: WebSocket):
+    """First message: {"type": "hello", "token": <API token>, "name": "...", "accessibility": bool}."""
+    from . import phonelink
+    await ws.accept()
+    try:
+        hello = await asyncio.wait_for(ws.receive_json(), 20)
+    except Exception:
+        await ws.close(code=4000)
+        return
+    found = accounts.token_user(str(hello.get("token") or "")) if hello.get("type") == "hello" else None
+    if not found or (config.MULTIUSER and not found[0]):
+        await ws.send_json({"type": "error", "error": "That API token isn't valid. Make one in Master → API tokens."})
+        await ws.close(code=4001)
+        return
+    user = found[0]
+    key = str(accounts.user_dir(user)) if user else str(config.ROOT_DATA)
+    conn = hub.Conn(ws, asyncio.get_running_loop(), user or {}, {"id": 0, "name": str(hello.get("name") or "My phone")[:40]},
+                    {k: hello.get(k) for k in ("accessibility", "listening", "battery", "model")})
+    phonelink.register(key, conn)
+    tok = config.use_dir(accounts.prepare(user)) if user else None
+    try:
+        db.audit("system", "phone_app.connected", name=conn.device["name"])
+    finally:
+        if user:
+            config.reset_dir(tok)
+    await ws.send_json({"type": "welcome", "name": conn.device["name"]})
+    try:
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") != "ping":
+                phonelink.deliver(conn, msg)
+    except Exception:
+        pass
+    finally:
+        phonelink.unregister(key, conn)
+
+
+@app.get("/api/phone")
+def phone_status():
+    from . import phonelink
+    return phonelink.info(config.user_key())
+
+
+class VoiceIn(BaseModel):
+    text: str
+    device: str = ""          # where it was said: "phone", "laptop", "siri"
+
+
+@app.post("/api/voice/command")
+def voice_command(body: VoiceIn, request: Request, format: str = "json"):
+    """A spoken command from the phone app, the laptop listener or a Siri Shortcut. Runs one full Brain turn
+    (with its tools, including controlling your devices) and returns the reply to speak."""
+    from fastapi.responses import PlainTextResponse
+    text = body.text.strip()[:2000]
+    if not text:
+        _err(ValueError("Say something after the wake word."))
+    out: dict = {}
+    try:
+        out = core.think(text, mode="assistant", conversation="main", voice=True)
+        reply = out["reply"]
+    except llm.ModelUnavailable as exc:
+        reply = str(exc).split("\n")[0]
+    db.audit("owner", "voice.command", device=body.device or "app")
+    if format == "text":
+        return PlainTextResponse(reply)
+    return {"reply": reply, "task": out.get("task")}
+
+
+# ---------- Always listening for the activation word (this computer) ----------
+
+class ListenerIn(BaseModel):
+    enabled: bool
+    lang: str = "en"
+
+
+@app.get("/api/listener")
+def listener_get():
+    from . import listener
+    return listener.local_status()
+
+
+@app.put("/api/listener")
+def listener_put(body: ListenerIn, request: Request):
+    from . import listener
+    _need_master(request)
+    try:
+        return listener.local_set(body.enabled, body.lang)
+    except (RuntimeError, ValueError) as exc:
+        _err(exc)

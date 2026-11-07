@@ -102,6 +102,11 @@ def main() -> None:
         pystray.MenuItem(label, None, enabled=False),
         pystray.MenuItem("Open my Brain", lambda *_: webbrowser.open(cfg["server"]), default=True),
         pystray.MenuItem("Pause control of this computer", toggle_pause, checked=lambda _i: bc.STATE["paused"]),
+        pystray.MenuItem(lambda _i: "Activation word: " + {"off": "off", "waiting": "listening", "listening": "hearing you…",
+                                                           "thinking": "working…", "speaking": "answering…", "loading": "starting…"}.get(bc.STATE.get("listening", "off"), "on"),
+                         None, enabled=False),
+        pystray.MenuItem("Pause listening", lambda icon, _i: (bc.set_paused(not bc.VOICE["paused"]), refresh(icon)),
+                         checked=lambda _i: bc.VOICE["paused"]),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Unlink this computer", unlink),
         pystray.MenuItem("Quit (stops all control)", lambda icon, _i: icon.stop()),
@@ -111,7 +116,7 @@ def main() -> None:
     def watch():
         last = None
         while True:
-            now = (bc.STATE["connected"], bc.STATE["paused"], bc.STATE["text"])
+            now = (bc.STATE["connected"], bc.STATE["paused"], bc.STATE["text"], bc.STATE.get("listening"))
             if now != last:
                 try:
                     refresh(icon)

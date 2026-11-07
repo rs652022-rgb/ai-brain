@@ -478,3 +478,60 @@ async function loadRemote() {
 }
 const _mLoad2 = loaders.master;
 loaders.master = async () => { await _mLoad2(); once("#tab-master", "remote-box", buildRemote); loadRemote(); };
+
+// ---------- Offline AI (Settings tab) ----------
+let offTimer = null;
+function buildOffline(box) {
+  box.append(card("Offline AI", "A free AI that runs on this computer, so your Brain keeps working with no internet. With internet it still uses your online models first (they're smarter).",
+    el("ol", { class: "steps" },
+      el("li", {}, "Install Ollama (free): ", el("a", { href: "https://ollama.com/download", target: "_blank", rel: "noopener" }, "ollama.com/download"), ", then open it once."),
+      el("li", {}, "Pick a model and press Download (about 2 GB, once).")),
+    el("div", { class: "row" }, el("select", { id: "off-model" }),
+      el("button", { class: "primary", onclick: () => tryNote("#off-note", async () => { await api("/api/offline/pull", { method: "POST", body: { model: $("#off-model").value } }); loadOffline(); }, "Downloading…") }, "Download")),
+    el("p", { class: "meta", id: "off-state" }), noteEl("off-note")));
+}
+async function loadOffline() {
+  const s = await api("/api/offline").catch(() => null);
+  if (!s) return;
+  if (!s.available) { $("#offline-box").hidden = true; return; }
+  const sel = $("#off-model");
+  if (!sel.options.length) for (const [m, d] of Object.entries(s.choices)) sel.append(el("option", { value: m }, `${m} · ${d}`));
+  const p = s.pull;
+  const parts = [s.online ? "Online now." : "Offline now: answering with the model on this computer.",
+    s.running ? `Ollama is running. Models here: ${s.models.join(", ") || "none yet"}.` : "Ollama isn't running.",
+    s.in_order ? `Offline model: ${s.chosen}.` : ""];
+  if (p.model && p.status !== "success" && !p.error) parts.push(`Downloading ${p.model}: ${p.total ? Math.round(100 * p.done / p.total) + "%" : p.status}`);
+  if (p.error) parts.push(`Download failed: ${p.error}`);
+  $("#off-state").textContent = parts.filter(Boolean).join("  ");
+  clearTimeout(offTimer);
+  if (p.model && p.status !== "success" && !p.error) offTimer = setTimeout(loadOffline, 2000);
+}
+const _setLoad2 = loaders.settings;
+loaders.settings = async () => { await _setLoad2(); once("#tab-settings", "offline-box", buildOffline); loadOffline(); };
+
+// ---------- Always listening for the activation word (Settings tab) ----------
+let lsTimer = null;
+function buildListener(box) {
+  box.append(card("Activation word (this computer)", "Like Siri: your Brain listens all the time for your activation word, then does what you say, using your computer if you've allowed it in Control. " +
+    "Speech is understood on this computer, offline. Nothing leaves it until it hears the activation word, and then only the words of your command. Change the activation word in Master → Wake words.",
+    el("div", { class: "mgrid" }, field("Language", el("select", { id: "ls-lang" }, el("option", { value: "en" }, "English"), el("option", { value: "hi" }, "Hindi")))),
+    el("div", { class: "switches" }, el("label", { class: "switch" }, el("span", {}, "Always listen for the activation word"), el("input", { type: "checkbox", id: "ls-on" }))),
+    el("p", { class: "meta", id: "ls-state" }),
+    el("div", { class: "row" }, el("button", { class: "primary", onclick: () => tryNote("#ls-note", async () => {
+      await api("/api/listener", { method: "PUT", body: { enabled: $("#ls-on").checked, lang: $("#ls-lang").value } }); loadListener();
+    }, "Saved.") }, "Save")), noteEl("ls-note")));
+}
+const LS_STATES = { off: "Off", loading: "Getting ready (first time: downloading the speech model, about 40 MB)…", waiting: "Listening for your activation word",
+  listening: "Listening to your command…", thinking: "Working on it…", speaking: "Answering…" };
+async function loadListener() {
+  const s = await api("/api/listener").catch(() => null);
+  if (!s) return;
+  if (!s.available) { $("#listener-box").hidden = true; return; }
+  if (!$("#ls-note").textContent) { $("#ls-on").checked = s.enabled; $("#ls-lang").value = s.lang; }
+  $("#ls-state").textContent = !s.installed ? "Voice packages aren't installed here (the desktop app has them)."
+    : [LS_STATES[s.state] || s.state, s.error, s.heard ? `Last heard: "${s.heard}"` : ""].filter(Boolean).join("  ·  ");
+  clearTimeout(lsTimer);
+  if ($("#tab-settings").classList.contains("active") && s.enabled) lsTimer = setTimeout(loadListener, 3000);
+}
+const _setLoad3 = loaders.settings;
+loaders.settings = async () => { await _setLoad3(); once("#tab-settings", "listener-box", buildListener); loadListener(); };

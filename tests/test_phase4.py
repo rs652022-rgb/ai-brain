@@ -344,3 +344,52 @@ def test_phone_access_only_over_tailscale_with_password(x):
     x.c.post("/api/remote/logout-all")
     assert phone.get("/api/status").status_code == 401
     assert remote.is_tailnet("100.64.0.1") and not remote.is_tailnet("192.168.1.2") and remote.is_tailnet("fd7a:115c:a1e0::1")
+
+
+def test_phone_app_link_controls_the_phone_and_voice_commands_work(x):
+    from brain import accounts, devices, phonelink
+    importlib.reload(phonelink)
+    token = accounts.make_token(0, "Phone")[0]
+    with x.c.websocket_connect("/api/phone/ws") as ws:
+        ws.send_json({"type": "hello", "token": "brain_bad"})
+        assert ws.receive_json()["type"] == "error"
+    sent = []
+
+    def fake_call(key, payload, timeout=40):
+        sent.append(payload)
+        if payload["op"] == "screen":
+            return {"app": "WhatsApp", "elements": [{"label": "Search", "kind": "EditText", "tap": True, "x": 100, "y": 200, "edit": True}]}
+        return {}
+    x.mp.setattr(phonelink, "call", fake_call)
+    with x.c.websocket_connect("/api/phone/ws") as ws:
+        ws.send_json({"type": "hello", "token": token, "name": "Rahul's Pixel", "accessibility": True})
+        assert ws.receive_json()["type"] == "welcome"
+        assert x.c.get("/api/phone").json()["connected"]
+        st = devices.status()
+        assert st["phones"][0]["via"] == "app"
+        view = devices.look("phone")
+        assert "WhatsApp" in view["text"] and "[1] \"Search\"" in view["text"]
+        assert devices.run("phone_tap_element", {"number": 1})["text"].startswith("Tapped [1]")
+        assert sent[-1] == {"op": "tap", "x": 100, "y": 200, "node": None}
+        devices.run("phone_key", {"key": "home"})
+        assert sent[-1] == {"op": "key", "name": "home"}
+        with pytest.raises(PermissionError):
+            devices.run("phone_type", {"text": "4111 1111 1111 1111"})
+    assert not x.c.get("/api/phone").json()["connected"]
+    # Voice commands (phone app, laptop listener, Siri): one Brain turn, reply to speak
+    x.script.append("Done, I set it for 7 am.")
+    r = x.c.post("/api/voice/command", json={"text": "wake me at 7", "device": "phone"})
+    assert r.json()["reply"] == "Done, I set it for 7 am."
+    x.script.append("Plain reply")
+    assert x.c.post("/api/voice/command?format=text", json={"text": "hi"}).text == "Plain reply"
+
+
+def test_offline_routing_uses_only_local_models(x):
+    data = x.settings.load()
+    data.setdefault("providers", {})["freellmapi"] = {"api_key": "k"}
+    data["order"] = ["freellmapi", "ollama"]
+    x.settings.save(data)
+    x.mp.setattr(x.llm, "online", lambda: False)
+    assert [p["id"] for p in x.llm._chain()] == ["ollama"]
+    x.mp.setattr(x.llm, "online", lambda: True)
+    assert [p["id"] for p in x.llm._chain()] == ["freellmapi", "ollama"]

@@ -741,8 +741,24 @@ def _remote(payload: dict) -> dict:
     return hub.call(config.user_key(), payload | {"folders": control.get()["folders"]})
 
 
+_app_phones: dict = {}
+
+
+def _app_phone():
+    """The Brain app on the owner's Android phone, if it's connected (preferred over a cable/ADB phone)."""
+    from . import phonelink
+    key = config.user_key()
+    if not phonelink.connected(key):
+        return None
+    if key not in _app_phones:
+        _app_phones[key] = phonelink.AppPhone(key)
+    return _app_phones[key]
+
+
 def run(action: str, args: dict) -> dict:
     """Carry out one action that has already been permitted. Returns {'text': ..., 'shot': optional}."""
+    if action.startswith("phone_") and _app_phone():
+        return run_local(action, args)            # the phone app links straight to the Brain, wherever it runs
     if config.MULTIUSER:
         return _remote({"op": "run", "action": action, "args": args or {}})
     return run_local(action, args)
@@ -750,7 +766,7 @@ def run(action: str, args: dict) -> dict:
 
 def run_local(action: str, args: dict) -> dict:
     a = args or {}
-    pc, ph = _pc, _phone
+    pc, ph = _pc, (_app_phone() or _phone)
     table = {
         "screenshot": lambda: {"text": "Took a screenshot.", "shot": pc.screenshot()},
         "list_windows": lambda: {"text": _fmt_windows(pc.windows())},
@@ -811,12 +827,17 @@ def _fmt_windows(w: dict) -> str:
 
 
 def _phone_look() -> dict:
+    app = _app_phone()
+    if app:
+        return app.look()
     shot = _phone.screenshot()
     return {"text": "Phone screen elements:\n" + _phone.ui(), "shot": shot}
 
 
 def look(device: str) -> dict:
     """A fresh view of a device: a screenshot plus any text description."""
+    if device == "phone" and _app_phone():
+        return _phone_look()
     if config.MULTIUSER:
         return _remote({"op": "look", "device": device})
     return look_local(device)
@@ -834,6 +855,17 @@ def look_local(device: str) -> dict:
 
 
 def status() -> dict:
+    from . import phonelink
+    app = phonelink.info(config.user_key())
+    out = _status_base()
+    if app["connected"]:
+        out["phones"] = [{"serial": "app", "model": app["name"] or "Phone (Brain app)", "state": "device",
+                          "via": "app", "accessibility": bool(app.get("accessibility"))}] + list(out.get("phones") or [])
+    out["phone_app"] = app
+    return out
+
+
+def _status_base() -> dict:
     if config.MULTIUSER:
         from . import hub
         conn = hub.connected(config.user_key())

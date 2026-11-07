@@ -162,6 +162,7 @@ def test_companion_runs_actions_on_the_users_own_computer(w):
         ws.send_json({"type": "hello", "token": token, "system": "Windows", "pc_installed": True, "adb_installed": False,
                       "phones": []})
         assert ws.receive_json()["type"] == "welcome"
+        assert ws.receive_json()["type"] == "listen"            # activation-word settings for the companion
         st = w.a.get("/api/control").json()["status"]
         assert st["connected"] and st["system"] == "Windows" and st["device_name"] == "Rahul-PC"
         assert w.a.get("/api/companion/devices").json()[0]["online"] is True
