@@ -281,3 +281,16 @@ def test_new_channel_crypto_round_trips(x):
     q["signature"] = hashlib.sha1("".join(sorted(["tok", "1", "2"])).encode()).hexdigest()
     assert cx._wx_sig_ok("tok", q) and not cx._wx_sig_ok("bad", q)
     assert len(x.channels.CHANNELS) >= 27
+
+
+def test_housekeeping_uses_freellmapi_fast_pool(x):
+    data = x.settings.load()
+    data["order"] = ["ollama"]; x.settings.save(data)
+    assert x.llm.light() is None                              # FreeLLMAPI not in use: normal routing
+    data = x.settings.load()
+    data.setdefault("providers", {})["freellmapi"] = {"api_key": "k"}
+    data["order"] = ["freellmapi"]
+    x.settings.save(data)
+    assert x.llm.light() == ("freellmapi", "auto:fast")
+    data = x.settings.load(); data["light_model"] = ""; x.settings.save(data)
+    assert x.llm.light() is None

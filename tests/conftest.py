@@ -1,4 +1,9 @@
+import os
+
 import pytest
+
+# The tests use a fixed owner name; the app itself starts with none and asks for it.
+os.environ.setdefault("BRAIN_OWNER_NAME", "Rahul Sharma")
 
 
 @pytest.fixture(autouse=True)

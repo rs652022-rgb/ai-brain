@@ -405,7 +405,7 @@ $("#v-download").addEventListener("click", (e) => voiceAction(e.target, "Downloa
 }));
 $("#v-test").addEventListener("click", async () => {
   await saveSettings(true);
-  await speak("Hey Rahul! Acha, this is how I sound now. Kaafi natural hai na?");
+  await speak(`Hey ${window.OWNER_FIRST && window.OWNER_FIRST !== "there" ? window.OWNER_FIRST : "there"}! This is how I sound now. Natural enough?`);
 });
 
 window.voiceReload = loadVoice;

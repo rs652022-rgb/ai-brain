@@ -36,7 +36,8 @@ def dream(day: str | None = None, force: bool = False) -> dict | None:
     text = _day_text(day)
     if len(text) < 200:
         return None
-    out, _ = llm.chat(DREAM_SYSTEM, [{"role": "user", "content": f"Day: {day}\n\n{text[-30000:]}"}], max_tokens=900)
+    out, _ = llm.chat(DREAM_SYSTEM, [{"role": "user", "content": f"Day: {day}\n\n{text[-30000:]}"}], max_tokens=900,
+                     prefer=llm.light())
     data = llm._parse_json(out) or {}
     diary = str(data.get("diary") or "").strip()
     if not diary:

@@ -82,7 +82,7 @@ def test_forget_and_audit_is_append_only(app):
 def test_identity_versions_and_honesty_lock(app):
     client, calls, _ = app
     y = client.get("/api/identity").json()["yaml"]
-    r = client.put("/api/identity", json={"yaml": y.replace("Rahul's Brain", "Rahul 2.0") + "\nlocked: {}\n"})
+    r = client.put("/api/identity", json={"yaml": y.replace("A mirror of its owner", "Rahul 2.0") + "\nlocked: {}\n"})
     assert r.status_code == 200 and r.json()["versions"]
     client.post("/api/chat", json={"message": "hello there"})
     assert "Rahul 2.0" in calls["system"] and "honesty" in calls["system"]

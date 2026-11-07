@@ -1,6 +1,22 @@
-# AI Brain — Phase 1
+# AI Brain
 
-Your personal AI Brain, running privately on your laptop. Phase 1 gives it a memory, an identity and a voice:
+**A private AI that learns to think and speak like you.** It remembers what you tell it, learns from the web when you ask,
+answers in your own voice, works in 27 chat apps, runs scheduled jobs and goals, uses your browser and computer when you
+allow it, and runs entirely on free models (FreeLLMAPI pools many free providers behind one key).
+
+Open source under the MIT license. Free to run: no subscriptions needed.
+
+**Get it**
+- **Desktop app** (Windows, macOS, Linux): Releases, or Actions → "Build desktop app" → Artifacts. See `desktop/README.md`.
+- **Web app with accounts** for you, your team or clients: see `DEPLOY.md` (free on Oracle Cloud or your own PC).
+- **Android app**: `mobile/README.md`. iPhone: install the web app from Safari (Share → Add to Home Screen).
+- **From source**: `start.bat` (Windows) or `./start.sh` (macOS/Linux).
+
+Contributions welcome: see `CONTRIBUTING.md`. Security reports: `SECURITY.md`.
+
+## What it does
+
+The core: a memory, an identity and a voice.
 
 - **Chat** in three modes: Mirror (speaks as you, to you), Assistant, and Coach
 - **Memory system**: events, facts, how-tos and current context, with hybrid search (meaning + words + recency)
@@ -15,7 +31,7 @@ Your personal AI Brain, running privately on your laptop. Phase 1 gives it a mem
 
 - **Device control** (off until you switch it on): it operates your **computer** (mouse, keyboard, screen, apps, files, commands) and your **Android phone** (taps, typing, apps, calls and messages), with per-action permissions, approvals and an instant stop
 
-It never spends money, types passwords or card details, or solves CAPTCHAs.
+It never spends money, sees your passwords, types card details, or solves CAPTCHAs.
 
 ## Two ways to run it
 
@@ -302,7 +318,7 @@ Providers and keys live in the Settings tab (saved to `data/settings.json` on yo
 
 | Setting | Default | What it does |
 |---|---|---|
-| `BRAIN_OWNER_NAME` | `Rahul Sharma` | Your name, used in prompts and imports |
+| `BRAIN_OWNER_NAME` | (empty: set it in Master) | Your name, used in prompts and imports |
 | `BRAIN_PORT` | `8765` | Port for the web app |
 | `GEMINI_API_KEY`, `GROQ_API_KEY`, … | (empty) | Optional: seeds Settings on first start |
 
@@ -353,6 +369,6 @@ deploy/, Dockerfile, docker-compose.yml   free hosting (see DEPLOY.md)
 tests/             tests with fake models: python -m pytest tests
 ```
 
-## What's next (Phase 2)
+## Earlier roadmap (now built)
 
 Read-only and draft-only connections to Gmail, Calendar and your CRM, a daily summary, and the permission tier system, as described in the master plan.

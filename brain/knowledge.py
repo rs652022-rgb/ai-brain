@@ -157,7 +157,7 @@ def research(topic: str, instruction: str = "", pages: int = 4) -> dict:
     queries = [topic]
     try:
         reply, _ = llm.chat(QUERIES_SYSTEM + " Output only the JSON object.",
-                            [{"role": "user", "content": f"Topic: {topic}\nInstruction: {instruction}"}])
+                            [{"role": "user", "content": f"Topic: {topic}\nInstruction: {instruction}"}], prefer=llm.light())
         found = llm._parse_json(reply) or {}
         queries = [q for q in found.get("queries", []) if isinstance(q, str) and q.strip()][:4] or queries
     except (llm.ModelUnavailable, ValueError) as exc:

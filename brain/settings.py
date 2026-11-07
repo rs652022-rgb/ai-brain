@@ -99,6 +99,8 @@ def save(data: dict) -> dict:
         on_disk = {}
     for key in ("master", "control", "channels", "agents", "mcp", "extras", "limits", "vault", "memory_engines", "gmail"):
         clean[key] = data[key] if isinstance(data.get(key), (dict, list)) else on_disk.get(key, [] if key in ("agents",) else {})
+    lm = data.get("light_model", on_disk.get("light_model", "auto:fast"))
+    clean["light_model"] = lm if lm in ("", "auto", "auto:fast", "auto:smart") else "auto:fast"
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean

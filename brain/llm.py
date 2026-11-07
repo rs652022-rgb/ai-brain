@@ -533,6 +533,17 @@ def _parse_json(text: str):
         return json.loads(m.group(0)) if m else None
 
 
+def light() -> tuple[str, str] | None:
+    """Housekeeping (chat summaries, web routing, dreaming, skill reflection, search planning) goes to
+    FreeLLMAPI's fast free pool, so the best models and your limits are kept for real answers.
+    Settings key "light_model": "auto:fast" (default), another FreeLLMAPI profile, or "" to switch it off."""
+    data = settings.load()
+    model = data.get("light_model", "auto:fast")
+    if model and "freellmapi" in data.get("order", []) and settings.resolved("freellmapi", data).get("api_key"):
+        return ("freellmapi", model)
+    return None
+
+
 def private_json(system: str, prompt: str) -> dict | None:
     """Tagging and fact extraction. Local first; cloud only if allowed in Settings. None if unavailable."""
     msgs = [{"role": "user", "content": prompt}]
@@ -540,7 +551,7 @@ def private_json(system: str, prompt: str) -> dict | None:
         if ollama_available():
             return _parse_json(call(settings.resolved("ollama"), system, msgs, json_mode=True))
         if settings.load().get("cloud_private_tasks"):
-            reply, _ = chat(system + " Output only the JSON object, no other text.", msgs)
+            reply, _ = chat(system + " Output only the JSON object, no other text.", msgs, prefer=light())
             return _parse_json(reply)
     except (ProviderError, ModelUnavailable, json.JSONDecodeError) as exc:
         log.info("Background task skipped: %s", exc)

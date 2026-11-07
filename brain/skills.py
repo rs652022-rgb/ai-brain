@@ -111,7 +111,7 @@ def reflect(message: str, tools_used: list[str], reply: str) -> dict | None:
     try:
         out, _ = llm.chat(REFLECT_SYSTEM, [{"role": "user", "content":
                           f"Owner asked: {message[:1500]}\nTools used: {', '.join(tools_used)}\nYour answer: {reply[:2000]}"}],
-                          max_tokens=500)
+                          max_tokens=500, prefer=llm.light())
         data = llm._parse_json(out)
     except Exception:
         return None

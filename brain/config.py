@@ -91,7 +91,7 @@ def __getattr__(name):           # config.DATA_DIR etc. always point at the curr
 
 SAFETY_CORE_PATH = ROOT / "brain" / "safety_core.md"
 
-OWNER_NAME = os.environ.get("BRAIN_OWNER_NAME", "Rahul Sharma")
+OWNER_NAME = os.environ.get("BRAIN_OWNER_NAME", "")   # set your name in Master (or here)
 
 # Providers, keys and models are set in the Settings tab (stored in data/settings.json).
 # These are only defaults for the local Ollama model.

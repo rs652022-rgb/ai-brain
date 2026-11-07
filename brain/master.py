@@ -115,7 +115,7 @@ def set_resting(on: bool) -> None:
 
 
 def owner_name() -> str:
-    return get()["owner_name"] or DEFAULTS["owner_name"]
+    return get()["owner_name"] or DEFAULTS["owner_name"] or "the owner"
 
 
 def brain_name() -> str:

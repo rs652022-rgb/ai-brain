@@ -9,8 +9,8 @@ from collections import defaultdict
 from . import memory
 
 # Handles common WhatsApp export formats, e.g.
-#   12/03/2024, 9:15 pm - Rahul Sharma: message
-#   [12/03/24, 21:15:02] Rahul Sharma: message
+#   12/03/2024, 9:15 pm - Your Name: message
+#   [12/03/24, 21:15:02] Your Name: message
 LINE = re.compile(
     r"^\[?(?P<date>\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}),?\s+(?P<time>\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)\]?"
     r"\s*(?:-\s*)?(?P<who>[^:]{1,60}):\s(?P<msg>.*)$",

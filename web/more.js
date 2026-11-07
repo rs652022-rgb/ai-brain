@@ -364,3 +364,21 @@ loaders.skills = async () => {
   once("#tab-skills", "ws-box", buildWorkspaces);
   loadShelf(); loadWorkspaces();
 };
+
+// ---------- First start: ask the owner's name (the app ships without one) ----------
+(async function askName() {
+  const b = await api("/api/master/public").catch(() => null);
+  if (!b || (b.owner_name || "").trim() || b.lock_app) return;
+  const name = el("input", { placeholder: "Your name", "aria-label": "Your name" });
+  const bar = el("form", { class: "card", style: "margin:12px 0" },
+    el("h2", {}, "Welcome! What should I call you?"),
+    el("p", { class: "hint" }, "Your Brain thinks and speaks like you, so it starts with your name. Then add a free FreeLLMAPI key in Settings."),
+    el("div", { class: "row" }, name, el("button", { class: "primary", type: "submit" }, "Save")));
+  bar.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!name.value.trim()) return;
+    try { await api("/api/master", { method: "PUT", body: { changes: { owner_name: name.value.trim() } } }); bar.remove(); loadBrand(); }
+    catch (err) { alert(err.message); }
+  });
+  $("#tab-chat").prepend(bar);
+})();
