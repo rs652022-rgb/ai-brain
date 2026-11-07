@@ -393,3 +393,21 @@ def test_offline_routing_uses_only_local_models(x):
     assert [p["id"] for p in x.llm._chain()] == ["ollama"]
     x.mp.setattr(x.llm, "online", lambda: True)
     assert [p["id"] for p in x.llm._chain()] == ["freellmapi", "ollama"]
+
+
+def test_listener_learns_custom_activation_words(x):
+    from brain import listener, master
+    importlib.reload(listener)
+    master.update({"wake_words": ["hey jarvis"]})
+    x.mp.setattr(listener.Listener, "transcribe", lambda self, pcm: "a job is")
+    assert listener.learn(b"\0\0")["added"]
+    assert listener.wake_list() == ["hey jarvis", "a job is"]
+    lis = listener.Listener(x.tmp, None, listener.wake_list())
+    assert lis._wake_split("a job is open the calculator") == (True, "open the calculator")
+    assert lis._wake_split("the brain is big") == (False, "")
+    x.mp.setattr(listener.Listener, "transcribe", lambda self, pcm: "hi")
+    assert not listener.learn(b"\0\0")["added"]                  # too short: would wake on everyday talk
+    listener.forget_learned()
+    assert listener.wake_list() == ["hey jarvis"]
+    st = x.c.get("/api/listener").json()
+    assert st["available"] and st["state"] == "off"

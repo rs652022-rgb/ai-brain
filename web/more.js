@@ -519,7 +519,15 @@ function buildListener(box) {
     el("p", { class: "meta", id: "ls-state" }),
     el("div", { class: "row" }, el("button", { class: "primary", onclick: () => tryNote("#ls-note", async () => {
       await api("/api/listener", { method: "PUT", body: { enabled: $("#ls-on").checked, lang: $("#ls-lang").value } }); loadListener();
-    }, "Saved.") }, "Save")), noteEl("ls-note")));
+    }, "Saved.") }, "Save"),
+      el("button", { onclick: async () => {
+        note("#ls-note", "Say your activation word now…");
+        try { const r = await api("/api/listener/learn", { method: "POST" }); note("#ls-note", r.message, !r.added && !/already/.test(r.message)); }
+        catch (e) { note("#ls-note", e.message, true); }
+      } }, "Teach it my activation word"),
+      el("button", { onclick: () => tryNote("#ls-note", () => api("/api/listener/learn", { method: "DELETE" }), "Forgot what it learned.") }, "Forget learned")),
+    el("p", { class: "hint" }, "Using a name it may not know (like \"Hey Jarvis\")? Press \"Teach it my activation word\" and say it once or twice."),
+    noteEl("ls-note")));
 }
 const LS_STATES = { off: "Off", loading: "Getting ready (first time: downloading the speech model, about 40 MB)…", waiting: "Listening for your activation word",
   listening: "Listening to your command…", thinking: "Working on it…", speaking: "Answering…" };

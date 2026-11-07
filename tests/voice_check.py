@@ -44,5 +44,19 @@ rec = vosk.KaldiRecognizer(vosk.Model(str(mp)), 16000)
 with wave.open(str(work / "16k.wav")) as w:
     rec.AcceptWaveform(w.readframes(w.getnframes()))
 print("raw transcript:", json.loads(rec.FinalResult()))
+# teach it the custom phrase, then it wakes on it
+helper = Listener(work, None, ["hey jarvis"], "en")
+subprocess.run(["espeak-ng", "-s", "140", "-w", str(wav), "hey jarvis"], check=True)
+subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-ar", "16000", "-ac", "1", str(work / "16k.wav")], check=True)
+with wave.open(str(work / "16k.wav")) as w:
+    learned = helper.transcribe(w.readframes(w.getnframes()))
+print("learned as:", learned)
+subprocess.run(["espeak-ng", "-s", "140", "-w", str(wav), "hey jarvis, open the calculator"], check=True)
+subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-ar", "16000", "-ac", "1", str(work / "16k.wav")], check=True)
+heard = []
+with wave.open(str(work / "16k.wav")) as w:
+    Listener(work, lambda t: heard.append(t) or "ok", ["hey jarvis", learned], "en").run_on_audio(b"\0" * 32000 + w.readframes(w.getnframes()))
+print("after learning, heard:", heard)
+results[2] = bool(heard) and "calculator" in heard[0]
 print("PASS" if all(results) else "FAIL", results)
 sys.exit(0 if all(results) else 1)

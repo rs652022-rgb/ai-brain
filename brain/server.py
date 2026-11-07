@@ -2876,3 +2876,21 @@ def listener_put(body: ListenerIn, request: Request):
         return listener.local_set(body.enabled, body.lang)
     except (RuntimeError, ValueError) as exc:
         _err(exc)
+
+
+@app.post("/api/listener/learn")
+def listener_learn(request: Request):
+    from . import listener
+    _need_master(request)
+    try:
+        return listener.learn()
+    except Exception as exc:
+        _err(exc)
+
+
+@app.delete("/api/listener/learn")
+def listener_forget(request: Request):
+    from . import listener
+    _need_master(request)
+    listener.forget_learned()
+    return {"ok": True}

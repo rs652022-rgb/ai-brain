@@ -179,6 +179,20 @@ class Listener:
         with stream:
             self._loop(model, wake_rec, audio)
 
+    def transcribe(self, pcm: bytes) -> str:
+        """What the offline model writes for this audio (used to learn how it hears a custom activation word)."""
+        import vosk
+        model, _ = self._model()
+        rec = vosk.KaldiRecognizer(model, RATE)
+        rec.AcceptWaveform(pcm)
+        return _norm(json.loads(rec.FinalResult()).get("text", ""))
+
+    def record(self, seconds: float = 3.5) -> bytes:
+        import sounddevice as sd
+        data = sd.rec(int(seconds * RATE), samplerate=RATE, channels=1, dtype="int16")
+        sd.wait()
+        return data.tobytes()
+
     def run_on_audio(self, pcm: bytes) -> None:
         """Feed recorded 16 kHz mono 16-bit audio instead of the microphone (used to test the whole flow)."""
         model, wake_rec = self._model()
@@ -331,7 +345,7 @@ def local_set(enabled: bool, lang: str = "en") -> dict:
     if lang not in MODELS:
         raise ValueError("Language is en or hi.")
     data = settings.load()
-    data["listener"] = {"enabled": bool(enabled), "lang": lang}
+    data["listener"] = (data.get("listener") or {}) | {"enabled": bool(enabled), "lang": lang}
     settings.save(data)
     db.audit("owner", "listener.on" if enabled else "listener.off", lang=lang)
     if config.MULTIUSER:                      # on a server, the Brain Companion on your computer does the listening
@@ -344,7 +358,7 @@ def local_set(enabled: bool, lang: str = "en") -> dict:
     if enabled:
         if not installed():
             raise RuntimeError("Voice packages aren't installed: pip install vosk sounddevice pyttsx3 (the desktop app has them).")
-        lis = Listener(config.ROOT_DATA, _local_handler, master.get().get("wake_words") or ["hey brain"], lang)
+        lis = Listener(config.ROOT_DATA, _local_handler, wake_list(), lang)
         _local["listener"] = lis
         lis.start()
     return local_status()
@@ -366,8 +380,7 @@ def companion_settings() -> dict:
     """What the Brain Companion on the user's computer needs to listen (sent when it connects or this changes)."""
     from . import master, settings
     c = settings.load().get("listener") or {}
-    return {"type": "listen", "enabled": bool(c.get("enabled")), "lang": c.get("lang", "en"),
-            "wake_words": master.get().get("wake_words") or ["hey brain"]}
+    return {"type": "listen", "enabled": bool(c.get("enabled")), "lang": c.get("lang", "en"), "wake_words": wake_list()}
 
 
 def tell_companion() -> None:
@@ -390,3 +403,56 @@ def restart_if_running() -> None:
     c = settings.load().get("listener") or {}
     if c.get("enabled") and _local["listener"]:
         local_set(True, c.get("lang", "en"))
+
+
+def wake_list() -> list[str]:
+    """The activation words from Master, plus how the offline model actually hears them (learned)."""
+    from . import master, settings
+    words = list(master.get().get("wake_words") or ["hey brain"])
+    return words + [a for a in ((settings.load().get("listener") or {}).get("heard_as") or []) if a not in words]
+
+
+def learn(pcm: bytes | None = None) -> dict:
+    """Say your activation word once: remember how the offline model hears it (e.g. "jarvis" -> "a job is"),
+    so even names it doesn't know wake it up."""
+    from . import config, db, master, settings
+    if config.MULTIUSER:
+        raise RuntimeError("Teach it on the Brain Companion's computer (coming from the tray menu).")
+    c = settings.load().get("listener") or {}
+    lis = _local["listener"]
+    was_on = bool(lis)
+    if lis:
+        lis.stop()
+        _local["listener"] = None
+        time.sleep(0.6)
+    try:
+        helper = Listener(config.ROOT_DATA, None, master.get().get("wake_words") or ["hey brain"], c.get("lang", "en"))
+        heard = helper.transcribe(pcm if pcm is not None else helper.record())
+    finally:
+        if was_on:
+            local_set(True, c.get("lang", "en"))
+    words = [_norm(w) for w in master.get().get("wake_words") or []]
+    if not heard:
+        return {"heard": "", "added": False, "message": "I didn't hear anything. Try again, a bit louder."}
+    if heard in words:
+        return {"heard": heard, "added": False, "message": "I hear it exactly right already."}
+    if len(heard.split()) < 2 and len(heard) < 6:
+        return {"heard": heard, "added": False, "message": f'I heard "{heard}", which is too short and common to use safely. Try a longer phrase.'}
+    data = settings.load()
+    lc = data.get("listener") or {}
+    lc["heard_as"] = list(dict.fromkeys((lc.get("heard_as") or []) + [heard]))[-6:]
+    data["listener"] = lc
+    settings.save(data)
+    db.audit("owner", "listener.learn")
+    restart_if_running()
+    return {"heard": heard, "added": True, "message": f"Got it: I'll also wake up when I hear \"{heard}\"."}
+
+
+def forget_learned() -> None:
+    from . import settings
+    data = settings.load()
+    lc = data.get("listener") or {}
+    lc["heard_as"] = []
+    data["listener"] = lc
+    settings.save(data)
+    restart_if_running()
