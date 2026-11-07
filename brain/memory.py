@@ -63,6 +63,8 @@ def add(content: str, type: str = "episodic", source: str = "manual", sensitivit
              sensitivity, source, happened_on, ts, ts, _to_blob(vec), label),
         )
         mem_id = cur.lastrowid
+    from . import memory_engines
+    memory_engines.lance_add(mem_id, vec)
     db.audit(actor, "memory.add", id=mem_id, type=type, source=source, sensitivity=sensitivity)
     return get(mem_id)
 
@@ -123,6 +125,8 @@ def forget(mem_id: int) -> bool:
     with db.session() as conn:
         n = conn.execute("DELETE FROM memories WHERE id=?", (mem_id,)).rowcount
     if n:
+        from . import memory_engines
+        memory_engines.lance_delete(mem_id)
         db.audit("owner", "memory.forget", id=mem_id)
     return bool(n)
 
@@ -203,8 +207,17 @@ def search(query: str, limit: int = config.RECALL_LIMIT, include_sealed: bool = 
         return []
     qvec, qlabel = _embed(query)
     qwords = _keywords(query)
+    from . import memory_engines
+    near = memory_engines.lance_search(qvec)
     with db.session() as conn:
-        rows = conn.execute("SELECT * FROM memories").fetchall()
+        if near is not None:                       # LanceDB: only the nearest memories, plus word matches
+            words = sorted(qwords)[:8]
+            like = " OR ".join("content LIKE ?" for _ in words) or "0"
+            ids = ",".join(str(int(i)) for i in near) or "0"
+            rows = conn.execute(f"SELECT * FROM memories WHERE id IN ({ids}) OR {like} LIMIT 600",
+                                [f"%{w}%" for w in words]).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM memories").fetchall()
     q = np.asarray(qvec, dtype=np.float32) if qvec is not None else None
     cands = []
     for r in rows:

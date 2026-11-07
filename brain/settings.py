@@ -97,7 +97,7 @@ def save(data: dict) -> dict:
         on_disk = json.loads(path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         on_disk = {}
-    for key in ("master", "control", "channels", "agents", "mcp", "extras"):
+    for key in ("master", "control", "channels", "agents", "mcp", "extras", "limits", "vault", "memory_engines", "gmail"):
         clean[key] = data[key] if isinstance(data.get(key), (dict, list)) else on_disk.get(key, [] if key in ("agents",) else {})
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")

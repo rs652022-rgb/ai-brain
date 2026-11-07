@@ -167,6 +167,9 @@ def init() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(memories)")}
         if "embed_model" not in cols:  # added when multi-provider embeddings arrived
             conn.execute("ALTER TABLE memories ADD COLUMN embed_model TEXT DEFAULT ''")
+        ucols = {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}
+        if "tokens" not in ucols:      # rough token counts, for spending limits and goal budgets
+            conn.execute("ALTER TABLE usage ADD COLUMN tokens INTEGER NOT NULL DEFAULT 0")
 
 
 def audit(actor: str, action: str, **detail) -> None:

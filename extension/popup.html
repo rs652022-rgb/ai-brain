@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Brain</title>
+<style>
+ body{font:13px system-ui,sans-serif;width:320px;margin:0;padding:14px;color:#1d1d1f;background:#fbfaf7}
+ h1{font-size:15px;margin:0 0 8px} label{display:block;margin:8px 0 2px;color:#555}
+ input{width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font:inherit}
+ button{margin-top:8px;padding:6px 10px;border:0;border-radius:6px;background:#3d5afe;color:#fff;font:inherit;cursor:pointer}
+ button.ghost{background:#eee;color:#222} .row{display:flex;gap:6px;align-items:center}
+ ul{list-style:none;padding:0;margin:6px 0} li{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #eee}
+ li button{margin:0;padding:1px 6px;background:#eee;color:#a00} #state{font-size:12px;color:#666} .hint{color:#777;font-size:12px}
+</style></head>
+<body>
+<h1>AI Brain <span id="state"></span></h1>
+<label>Brain address</label><input id="url" placeholder="https://brain.example.com or http://localhost:8000">
+<label>API token (Brain → Settings → API tokens)</label><input id="token" type="password" placeholder="brain_…">
+<div class="row"><button id="save">Save and connect</button><button id="pause" class="ghost">Pause</button></div>
+<label>Sites the Brain may use</label>
+<ul id="sites"></ul>
+<div class="row"><input id="site" placeholder="e.g. mail.google.com"><button id="add">Allow</button></div>
+<div class="row"><button id="addcur" class="ghost">Allow this tab's site</button></div>
+<p class="hint">The Brain sees and acts only on these sites. Passwords are typed only from your Brain's vault, on the vault's sites.</p>
+<script src="popup.js"></script>
+</body></html>

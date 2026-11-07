@@ -304,9 +304,23 @@ function replyExtras(r) {
 
 // Sends a message and shows the reply word by word as it is written.
 // opts.onText(piece) receives each new piece (used to start speaking after the first sentence).
+let chatBusy = false;
+async function steerChat(text) {
+  addMsg("user steer", `↪ ${text}`);
+  try { await api("/api/chat/steer", { method: "POST", body: { text, agent: $("#agent-pick").value } }); }
+  catch (err) { addMsg("assistant error", err.message); }
+}
+async function stopChat() {
+  await api("/api/chat/abort", { method: "POST", body: { agent: $("#agent-pick").value } }).catch(() => {});
+}
 async function sendChat(e, opts = {}) {
   e?.preventDefault?.();
   const input = $("#chat-input");
+  if (chatBusy && !opts.text) {                // typing while it works: steer it instead of waiting
+    const t = input.value.trim();
+    if (t) { input.value = ""; steerChat(t); }
+    return null;
+  }
   const text = (opts.text ?? input.value).trim() || (ATTACHED.length ? "Look at what I've attached." : "");
   if (!text) return null;
   input.value = "";
@@ -316,7 +330,11 @@ async function sendChat(e, opts = {}) {
   const learning = /^\/(learn|research|read|topic)\b|^(please\s+)?(learn|research)\b|^every\s+(day|week|month)\b/i.test(text);
   const bubble = addMsg("assistant thinking",
     learning ? "Learning… reading the web can take up to a minute." : webOn ? "Searching the web…" : "Thinking…");
-  $("#send").disabled = true;
+  chatBusy = true;
+  $("#send").querySelector(".label").textContent = "Steer";
+  $("#send").title = "It's still working: what you type now adjusts this answer";
+  $("#chat-stop").hidden = false;
+  input.placeholder = "Still working… type to steer it (e.g. only free options), or press Stop";
   let reply = "", result = null;
   try {
     const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -367,7 +385,11 @@ async function sendChat(e, opts = {}) {
     if (details) bubble.append(el("details", {}, el("summary", {}, "Technical details"), el("div", {}, details)));
     return { reply: reply || `Sorry, ${err.message}`, error: true };
   } finally {
-    $("#send").disabled = false; if (!opts.spoken) input.focus();
+    chatBusy = false;
+    $("#send").querySelector(".label").textContent = "Send"; $("#send").title = "";
+    $("#chat-stop").hidden = true;
+    input.placeholder = "Type, or tap the mic. Try /learn, /read, /rule, /web, /goal";
+    if (!opts.spoken) input.focus();
     api(`/api/chat/history?limit=1&agent=${encodeURIComponent($("#agent-pick").value)}`).then((h) => { if (h.length) chatSeen = h[h.length - 1].id; }).catch(() => {});
   }
 }
@@ -375,6 +397,7 @@ let webNext = false;
 function setWebNext(on) { webNext = on; $("#web-toggle").classList.toggle("on", on); }
 $("#web-toggle").addEventListener("click", () => setWebNext(!webNext));
 $("#chat-form").addEventListener("submit", sendChat);
+$("#chat-stop").addEventListener("click", stopChat);
 $("#chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) sendChat(e); });
 $("#clear-chat").addEventListener("click", async () => {
   if (!confirm("Clear this conversation? Your memories are kept.")) return;

@@ -9,4 +9,5 @@ if [ ! -f .venv/setup-complete.txt ] || ! cmp -s requirements.txt .venv/requirem
   cp requirements.txt .venv/requirements.installed
   echo done > .venv/setup-complete.txt
 fi
+if [ "$1" = "--tray" ]; then shift; exec .venv/bin/python brain_tray.py "$@"; fi
 exec .venv/bin/python brain_companion.py "$@"

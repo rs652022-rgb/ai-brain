@@ -23,6 +23,10 @@ if errorlevel 1 (
 copy /y requirements.txt .venv\requirements.installed >nul
 echo done> .venv\setup-complete.txt
 :run
+if "%1"=="--tray" (
+  start "" .venv\Scripts\pythonw brain_tray.py
+  exit /b
+)
 title Brain Companion - close this window to stop
 .venv\Scripts\python brain_companion.py %*
 pause

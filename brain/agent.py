@@ -65,6 +65,7 @@ class Task:
         self._reply: dict = {}
         self.vision = True
         self.owner = config.user_key()     # whose task this is (accounts on a server are kept apart)
+        self.notes: list[str] = []          # the owner's steering notes while it runs
 
     def public(self, with_screen: bool = True) -> dict:
         out = {"id": self.id, "goal": self.goal, "device": self.device, "status": self.status, "steps": self.steps,
@@ -194,6 +195,9 @@ def _prompt(t: Task, view_text: str) -> list[dict]:
         lines.append("Steps so far:")
         for i, s in enumerate(t.steps[-14:], max(1, len(t.steps) - 13)):
             lines.append(f"{i}. {s['action']} {json.dumps(s['args'], ensure_ascii=False)[:200]} -> {s['result'][:400]}")
+        lines.append("")
+    if t.notes:
+        lines.append("The owner's latest instructions while you work (follow them): " + " / ".join(t.notes[-5:]))
         lines.append("")
     if view_text:
         lines.append(view_text[:6000])

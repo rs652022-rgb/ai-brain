@@ -67,6 +67,8 @@ def _start_scheduler():
                 for_each_brain(workflows.check_mail, "Email watcher")
             if ticks % 120 == 0:                       # about once an hour
                 for_each_brain(dreaming.nightly, "Dreaming")
+                from . import gmail
+                for_each_brain(gmail.renew_if_needed, "Gmail watch")
             ticks += 1
             time.sleep(30)
 
@@ -108,7 +110,7 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
 AUTH_COOKIE = "brain_auth"
 # Reachable without logging in (on a server with accounts)
 PUBLIC_API = ("/api/auth/", "/api/health", "/api/companion/pair", "/api/companion/ws", "/api/hooks/",
-              "/api/channels/in/", "/v1/")
+              "/api/channels/in/", "/api/gmail/push/", "/v1/")
 MAX_BODY = 30 * 1024 * 1024
 
 
@@ -1030,6 +1032,89 @@ async def chat_upload(file: UploadFile):
         _err(exc)
 
 
+class SteerIn(BaseModel):
+    text: str = ""
+    agent: str = ""
+
+
+@app.post("/api/chat/steer")
+def chat_steer(body: SteerIn):
+    """A note for an answer that is still working (it's added before the next step)."""
+    from . import goals
+    goals.steer_chat(f"agent:{body.agent}" if body.agent else "main", body.text)
+    return {"ok": True}
+
+
+@app.post("/api/chat/abort")
+def chat_abort(body: SteerIn):
+    from . import goals
+    goals.abort_chat(f"agent:{body.agent}" if body.agent else "main")
+    return {"ok": True}
+
+
+@app.post("/api/control/task/{task_id}/steer")
+def control_task_steer(task_id: str, body: SteerIn):
+    t = agent.get(task_id)
+    if not t:
+        _err(KeyError("No such task"), 404)
+    t.notes.append(body.text.strip()[:500])
+    db.audit("owner", "device.steer", task=task_id)
+    return {"ok": True}
+
+
+# ---------- Goals and limits ----------
+
+@app.get("/api/goals")
+def goals_get():
+    from . import goals, usage
+    return {"goals": goals.mine(), "limits": settings.load().get("limits") or {}, "today": usage.today()}
+
+
+class GoalIn(BaseModel):
+    text: str
+    max_requests: int = 30
+    max_tokens: int = 200000
+    deliver: str = "web"
+
+
+@app.post("/api/goals")
+def goals_start(body: GoalIn):
+    from . import goals
+    try:
+        return goals.start(body.text, body.max_requests, body.max_tokens, body.deliver)
+    except ValueError as exc:
+        _err(exc)
+
+
+class GoalCtl(BaseModel):
+    action: str
+    note: str = ""
+
+
+@app.post("/api/goals/{gid}")
+def goals_control(gid: str, body: GoalCtl):
+    from . import goals
+    try:
+        return goals.control(gid, body.action, body.note)
+    except ValueError as exc:
+        _err(exc)
+
+
+class LimitsIn(BaseModel):
+    daily_requests: int = 0
+    daily_tokens: int = 0
+
+
+@app.put("/api/limits")
+def limits_put(body: LimitsIn, request: Request):
+    _need_master(request)
+    data = settings.load()
+    data["limits"] = {"daily_requests": max(0, body.daily_requests), "daily_tokens": max(0, body.daily_tokens)}
+    settings.save(data)
+    db.audit("owner", "limits.update", **data["limits"])
+    return data["limits"]
+
+
 # ---------- Agents ----------
 
 @app.get("/api/agents")
@@ -1097,20 +1182,27 @@ def _as_owner_of_inbox(secret: str):
                 config._user_role.reset(role)
 
 
-@app.get("/api/channels/in/whatsapp/{secret}")
-def whatsapp_verify(secret: str, request: Request):
-    from . import channels_more
+@app.get("/api/channels/in/{channel}/{secret}")
+def channel_verify(channel: str, secret: str, request: Request):
+    """One-time checks some services do when you register the webhook address."""
+    from . import channels_extra as cx, channels_more
+    q = dict(request.query_params)
     for _ in _as_owner_of_inbox(secret):
-        challenge = channels_more.whatsapp_verify(dict(request.query_params))
-        if challenge is not None:
-            return Response(content=challenge, media_type="text/plain")
+        try:
+            answer = {"whatsapp": lambda: channels_more.whatsapp_verify(q), "wechat": lambda: cx.wechat_verify(q),
+                      "wecom": lambda: cx.wecom_verify(q), "messenger": lambda: cx.meta_verify("messenger", q),
+                      "instagram": lambda: cx.meta_verify("instagram", q)}.get(channel, lambda: None)()
+        except Exception:
+            answer = None
+        if answer is not None:
+            return Response(content=answer, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
 @app.post("/api/channels/in/{channel}/{secret}")
 async def channel_inbound(channel: str, secret: str, request: Request):
-    """WhatsApp, SMS (Twilio) and LINE deliver messages here. Each is checked with the service's signature."""
-    from . import channels_more
+    """Webhook channels deliver messages here. Each is checked with the service's own signature or secret."""
+    from . import channels_extra as cx, channels_more
     raw = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
     for _ in _as_owner_of_inbox(secret):
@@ -1123,6 +1215,29 @@ async def channel_inbound(channel: str, secret: str, request: Request):
                 form = dict((await request.form()).items())
                 channels_more.sms_inbound(f"{_site(request)}{request.url.path}", form, headers)
                 return Response(content="<Response/>", media_type="text/xml")
+            elif channel in ("wechat", "wecom"):
+                q = dict(request.query_params)
+                out = cx.wechat_inbound(raw, q) if channel == "wechat" else cx.wecom_inbound(raw, q)
+                return Response(content=out, media_type="text/plain")
+            elif channel == "feishu":
+                return cx.feishu_inbound(json.loads(raw or b"{}"))
+            elif channel == "dingtalk":
+                cx.dingtalk_inbound(json.loads(raw or b"{}"), headers)
+            elif channel == "zalo":
+                cx.zalo_inbound(raw, headers)
+            elif channel == "nextcloud":
+                cx.nextcloud_inbound(raw, headers)
+            elif channel == "synology":
+                form = dict((await request.form()).items())
+                cx.synology_inbound(form)
+            elif channel == "rocketchat":
+                cx.rocketchat_inbound(json.loads(raw or b"{}"))
+            elif channel == "viber":
+                cx.viber_inbound(raw, headers)
+            elif channel in ("messenger", "instagram"):
+                cx.meta_inbound(channel, raw, headers)
+            elif channel == "webex":
+                cx.webex_inbound(raw, headers)
             else:
                 break
         except PermissionError:
@@ -2107,7 +2222,8 @@ def service_worker():
     return FileResponse(WEB / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
-DOWNLOADS = ("BrainCompanion-Windows.exe", "BrainCompanion-macOS.zip", "BrainCompanion-Linux")
+DOWNLOADS = ("BrainCompanion-Windows.exe", "BrainCompanion-macOS.zip", "BrainCompanion-Linux",
+             "BrainTray-Windows.exe", "BrainTray-macOS.zip", "BrainTray-Linux")
 
 
 @app.get("/api/downloads")
@@ -2138,7 +2254,7 @@ def _companion_zip() -> bytes:
         buf = io.BytesIO()
         root = config.ROOT
         files = ["companion/brain_companion.py", "companion/requirements.txt", "companion/start-companion.bat",
-                 "companion/start-companion.sh", "companion/README.txt",
+                 "companion/start-companion.sh", "companion/README.txt", "companion/brain_tray.py",
                  *[f"brain/{n}" for n in ("__init__.py", "config.py", "control.py", "devices.py", "settings.py",
                                          "providers.py", "voice.py", "web.py")]]
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -2149,3 +2265,344 @@ def _companion_zip() -> bytes:
                     z.write(path, arc)
         _zip_cache["data"] = buf.getvalue()
     return _zip_cache["data"]
+
+
+# ---------- Chrome extension ----------
+
+@app.websocket("/api/ext/ws")
+async def extension_ws(ws: WebSocket):
+    """The Brain extension in your Chrome. First message: {"type": "hello", "token": <API token>, ...}."""
+    from . import extension
+    await ws.accept()
+    try:
+        hello = await asyncio.wait_for(ws.receive_json(), 20)
+    except Exception:
+        await ws.close(code=4000)
+        return
+    found = accounts.token_user(str(hello.get("token") or "")) if hello.get("type") == "hello" else None
+    if not found or (config.MULTIUSER and not found[0]):
+        await ws.send_json({"type": "error", "error": "That API token isn't valid. Make one in Settings → API tokens."})
+        await ws.close(code=4001)
+        return
+    user = found[0]
+    key = str(accounts.user_dir(user)) if user else str(config.ROOT_DATA)
+    conn = hub.Conn(ws, asyncio.get_running_loop(), user or {}, {"id": 0, "name": "Chrome"},
+                    {"browser": str(hello.get("browser") or "Chrome")[:40], "sites": [str(s)[:80] for s in hello.get("sites", [])][:100]})
+    extension.register(key, conn)
+    tok = config.use_dir(accounts.prepare(user)) if user else None
+    try:
+        db.audit("system", "extension.connected", browser=conn.info["browser"], sites=len(conn.info["sites"]))
+    finally:
+        if user:
+            config.reset_dir(tok)
+    await ws.send_json({"type": "welcome"})
+    try:
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") != "ping":
+                extension.deliver(conn, msg)
+    except Exception:
+        pass
+    finally:
+        extension.unregister(key, conn)
+
+
+@app.get("/api/ext/status")
+def extension_status():
+    from . import extension
+    return extension.status(config.user_key())
+
+
+@app.get("/api/ext/download")
+def extension_download():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted((config.ROOT / "extension").iterdir()):
+            if f.is_file():
+                z.write(f, f"ai-brain-extension/{f.name}")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": "attachment; filename=ai-brain-extension.zip"})
+
+
+# ---------- Secrets vault ----------
+
+class VaultIn(BaseModel):
+    name: str
+    sites: str = ""
+    value: str = ""
+    username: str = ""
+    source: str = "local"
+    ref: str = ""
+    note: str = ""
+
+
+@app.get("/api/vault")
+def vault_get():
+    from . import vault
+    return {"items": vault.listing()}
+
+
+@app.post("/api/vault")
+def vault_save(body: VaultIn, request: Request):
+    from . import vault
+    _need_master(request)
+    try:
+        return vault.save(body.name, body.sites, body.value, body.username, body.source, body.ref, body.note)
+    except vault.VaultError as exc:
+        _err(exc)
+
+
+@app.delete("/api/vault/{name}")
+def vault_delete(name: str, request: Request):
+    from . import vault
+    _need_master(request)
+    vault.delete(name)
+    return {"ok": True}
+
+
+# ---------- Memory engines and tracing ----------
+
+@app.get("/api/memory-engines")
+def memory_engines_get():
+    from . import memory_engines, tracing
+    return memory_engines.public() | {"tracing": tracing.status()}
+
+
+@app.put("/api/memory-engines")
+def memory_engines_put(body: dict, request: Request):
+    from . import memory_engines
+    _need_master(request)
+    try:
+        return memory_engines.save(body)
+    except ValueError as exc:
+        _err(exc)
+
+
+# ---------- Skill marketplace ----------
+
+def _is_admin(request) -> bool:
+    u = getattr(request.state, "user", None)
+    return not config.MULTIUSER or bool(u and u["role"] == "admin")
+
+
+@app.get("/api/market/clawhub")
+def market_clawhub(q: str = ""):
+    from . import market
+    try:
+        return {"results": market.clawhub_search(q)}
+    except market.MarketError as exc:
+        _err(exc, 502)
+
+
+class SlugIn(BaseModel):
+    slug: str = ""
+    id: str = ""
+    name: str = ""
+    approve: bool = True
+
+
+@app.post("/api/market/clawhub/install")
+def market_clawhub_install(body: SlugIn):
+    from . import market
+    try:
+        return {"added": market.clawhub_install(body.slug)}
+    except market.MarketError as exc:
+        _err(exc, 502)
+
+
+@app.get("/api/market/shelf")
+def market_shelf(request: Request):
+    from . import market
+    return {"items": market.shelf(_is_admin(request)), "admin": _is_admin(request)}
+
+
+@app.post("/api/market/shelf/publish")
+def market_publish(body: SlugIn, request: Request):
+    from . import market
+    u = getattr(request.state, "user", None)
+    try:
+        return market.publish(body.name, (u or {}).get("name") or master.owner_name())
+    except market.MarketError as exc:
+        _err(exc)
+
+
+@app.post("/api/market/shelf/install")
+def market_shelf_install(body: SlugIn):
+    from . import market
+    try:
+        return {"added": market.shelf_install(body.id)}
+    except market.MarketError as exc:
+        _err(exc)
+
+
+@app.post("/api/market/shelf/moderate")
+def market_moderate(body: SlugIn, request: Request):
+    from . import market
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="Only the admin approves skills.")
+    market.moderate(body.id, body.approve)
+    return {"ok": True}
+
+
+@app.delete("/api/market/shelf/{item_id}")
+def market_unpublish(item_id: str, request: Request):
+    from . import market
+    market.unpublish(item_id, _is_admin(request))
+    return {"ok": True}
+
+
+# ---------- Gmail push ----------
+
+@app.get("/api/gmail")
+def gmail_get(request: Request):
+    from . import gmail
+    return gmail.public(_site(request))
+
+
+@app.put("/api/gmail")
+def gmail_put(body: dict, request: Request):
+    from . import gmail
+    _need_master(request)
+    try:
+        gmail.save(body)
+    except gmail.GmailError as exc:
+        _err(exc)
+    return gmail.public(_site(request))
+
+
+@app.post("/api/gmail/connect")
+def gmail_connect(request: Request):
+    from . import gmail
+    try:
+        return {"url": gmail.auth_url(f"{_site(request)}/api/gmail/callback")}
+    except gmail.GmailError as exc:
+        _err(exc)
+
+
+@app.get("/api/gmail/callback")
+def gmail_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    from fastapi.responses import RedirectResponse
+    from . import gmail
+    if error or not code or gmail.state_owner(state) != config.user_key():
+        return RedirectResponse("/#settings?gmail=failed")
+    try:
+        gmail.finish(code, f"{_site(request)}/api/gmail/callback")
+    except Exception as exc:
+        logging.getLogger("brain.gmail").warning("Gmail connect failed: %s", exc)
+        return RedirectResponse("/#settings?gmail=failed")
+    return RedirectResponse("/#settings?gmail=connected")
+
+
+@app.post("/api/gmail/watch")
+def gmail_watch():
+    from . import gmail
+    try:
+        return gmail.watch()
+    except gmail.GmailError as exc:
+        _err(exc)
+
+
+@app.post("/api/gmail/disconnect")
+def gmail_disconnect():
+    from . import gmail
+    gmail.disconnect()
+    return {"ok": True}
+
+
+def _as_owner_of_gmail(secret: str):
+    from . import gmail
+    users = accounts.list_users() if config.MULTIUSER else [None]
+    for u in users:
+        if u and u["disabled"]:
+            continue
+        tok = config.use_dir(accounts.prepare(u)) if u else None
+        role = config.set_role(u["role"]) if u else None
+        try:
+            if hmac.compare_digest((settings.load().get("gmail") or {}).get("secret", "") or "-", secret):
+                yield True
+                return
+        finally:
+            if u:
+                config.reset_dir(tok)
+                config._user_role.reset(role)
+
+
+@app.post("/api/gmail/push/{secret}")
+async def gmail_push(secret: str, request: Request):
+    """Google Pub/Sub tells us a new email arrived. Always answer 204 quickly so Google doesn't resend."""
+    from . import gmail
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    note = gmail.decode_push(body)
+    for _ in _as_owner_of_gmail(secret):
+        if note:
+            config.spawn(gmail.handle_push, note)
+    return Response(status_code=204)
+
+
+# ---------- Coding workspaces ----------
+
+class WorkspaceIn(BaseModel):
+    name: str
+    url: str = ""
+    message: str = ""
+
+
+@app.get("/api/workspaces")
+def workspaces_list():
+    from . import workspaces
+    return {"workspaces": workspaces.list_all()}
+
+
+@app.post("/api/workspaces")
+def workspaces_create(body: WorkspaceIn):
+    from . import workspaces
+    try:
+        return workspaces.create(body.name.strip(), body.url.strip())
+    except (workspaces.WorkspaceError, ValueError) as exc:
+        _err(exc)
+
+
+@app.get("/api/workspaces/{name}/diff")
+def workspaces_diff(name: str):
+    from . import workspaces
+    try:
+        return {"diff": workspaces.diff(name), "files": workspaces.tree(name)}
+    except workspaces.WorkspaceError as exc:
+        _err(exc)
+
+
+@app.post("/api/workspaces/{name}/{action}")
+def workspaces_action(name: str, action: str, body: WorkspaceIn):
+    from . import workspaces
+    try:
+        if action == "commit":
+            return {"result": workspaces.commit(name, body.message)}
+        if action == "discard":
+            return {"result": workspaces.discard(name)}
+    except workspaces.WorkspaceError as exc:
+        _err(exc)
+    _err(ValueError("Unknown action"), 404)
+
+
+@app.delete("/api/workspaces/{name}")
+def workspaces_delete(name: str):
+    from . import workspaces
+    try:
+        workspaces.delete(name)
+    except workspaces.WorkspaceError as exc:
+        _err(exc)
+    return {"ok": True}
+
+
+@app.post("/api/channels/{channel}/register-webhook")
+def channel_register_webhook(channel: str, request: Request):
+    from . import channels, channels_extra
+    url = f"{_site(request)}/api/channels/in/{channel}/{channels.inbox_secret()}"
+    if not url.startswith("https://"):
+        _err(ValueError("Your Brain needs an https:// address for this (see DEPLOY.md)."))
+    try:
+        return {"result": channels_extra.register_webhook(channel, url)}
+    except Exception as exc:
+        _err(exc)

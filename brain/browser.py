@@ -2,7 +2,7 @@
 then read what the page shows. Runs a headless Chromium on the machine the Brain runs on.
 
 Safety: it can't open your own computer or private network addresses (every request is checked),
-it never types passwords or card numbers, and page text is information, not instructions.
+it never types card numbers, types passwords only from the vault on their allowed sites, and page text is information, not instructions.
 Needs Playwright: Settings → Install the browser tool (or `pip install playwright && playwright install chromium`).
 """
 import base64
@@ -12,7 +12,7 @@ import subprocess
 import sys
 from urllib.parse import urlparse
 
-from . import config, devices, web
+from . import config, devices, vault, web
 
 
 class BrowserError(RuntimeError):
@@ -52,7 +52,7 @@ def _host_ok(url: str) -> bool:
 def _elements(page) -> str:
     js = """() => [...document.querySelectorAll('a,button,input,textarea,select,[role=button]')].filter(e => {
         const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).slice(0, 60).map(e => {
-        const t = (e.innerText || e.value || e.placeholder || e.getAttribute('aria-label') || e.name || '').trim().slice(0, 60);
+        const t = (e.innerText || (e.type === 'password' ? '' : e.value) || e.placeholder || e.getAttribute('aria-label') || e.name || '').trim().slice(0, 60);
         return `${e.tagName.toLowerCase()}${e.type ? '[' + e.type + ']' : ''}: ${t}`; })"""
     try:
         return "\n".join(page.evaluate(js))
@@ -75,7 +75,7 @@ def browse(url: str, actions: list | None = None, screenshot: bool = False) -> d
             ctx.route("**/*", lambda route: route.continue_() if _host_ok(route.request.url) else route.abort())
             page = ctx.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            done = []
+            done, secrets_used = [], []
             for act in (actions or [])[:12]:
                 if not isinstance(act, dict):
                     continue
@@ -88,8 +88,14 @@ def browse(url: str, actions: list | None = None, screenshot: bool = False) -> d
                     elif "fill" in act:
                         sel, value = act["fill"][0], str(act["fill"][1])
                         devices.check_text(value)
-                        if re.search(r"pass|card|cvv|otp|pin", sel, re.I):
-                            raise PermissionError("I don't type into password, card, OTP or PIN fields.")
+                        if vault.has_placeholder(value):
+                            if re.search(r"card|cvv|otp", sel, re.I):
+                                raise PermissionError("Vault secrets aren't typed into card or OTP fields.")
+                            value, used = vault.resolve(value, page.url)
+                            secrets_used += used
+                        elif re.search(r"pass|card|cvv|otp|pin", sel, re.I):
+                            raise PermissionError("I don't type into password, card, OTP or PIN fields "
+                                                  "(save the password in the vault and use its placeholder).")
                         loc = page.locator(sel) if re.match(r"^[#.\[]|^\w+\[", sel) else page.get_by_placeholder(sel)
                         loc.first.fill(value, timeout=8000)
                         done.append(f"typed into {sel}")
@@ -104,13 +110,14 @@ def browse(url: str, actions: list | None = None, screenshot: bool = False) -> d
                         web.check_url(str(act["goto"]))
                         page.goto(str(act["goto"]), wait_until="domcontentloaded", timeout=30000)
                     page.wait_for_load_state("domcontentloaded", timeout=10000)
-                except PermissionError:
+                except (PermissionError, vault.VaultError):
                     raise
                 except Exception as exc:
                     done.append(f"couldn't do {act}: {str(exc)[:120]}")
             page.wait_for_timeout(600)
             text, _ = web.html_to_text(page.content(), page.url)
-            out = {"url": page.url, "title": page.title(), "text": text[:7000], "elements": _elements(page), "done": done}
+            out = {"url": page.url, "title": vault.scrub(page.title(), secrets_used), "text": vault.scrub(text[:7000], secrets_used),
+                   "elements": vault.scrub(_elements(page), secrets_used), "done": done}
             if screenshot:
                 out["shot"] = devices._jpeg(page.screenshot(type="png"), max_w=1100)
             return out

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "AI Brain",
+  "version": "1.0.0",
+  "description": "Lets your own AI Brain use the browser tabs you're signed in to, only on the sites you allow.",
+  "permissions": ["tabs", "scripting", "storage", "alarms"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_icon": "icon.png", "default_title": "AI Brain" },
+  "icons": { "128": "icon.png" }
+}

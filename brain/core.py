@@ -94,9 +94,10 @@ SLASH_HELP = """Commands:
 /compact: summarise this conversation now to keep it short
 /search <words>: search past conversations
 /skills, /jobs: what it knows how to do, and what is scheduled
+/goal <goal> --budget 40: work on something bigger in the background, within a budget
 /learn, /read, /rule, /web, /forget, /do, /pc, /phone: learning, web and device commands"""
 
-SLASH = re.compile(r"^/(help|new|status|model|think|btw|compact|search|skills|jobs)\b\s*(.*)$", re.I | re.S)
+SLASH = re.compile(r"^/(help|new|status|model|think|btw|compact|search|skills|jobs|goals|goal)\b\s*(.*)$", re.I | re.S)
 
 
 def slash_command(message: str, conversation: str) -> dict | None:
@@ -170,6 +171,17 @@ def slash_command(message: str, conversation: str) -> dict | None:
         return {"reply": f"Models: {prov}\nThinking: {data.get('thinking', 'fast')}\nMemories: {st.get('total', 0)}"
                          f"\nChannels: {chans}\nScheduled jobs: {jobs}\nDevice control: "
                          f"{'on' if control.ready() else 'off'}", "action": "status"}
+    if cmd in ("goal", "goals"):
+        from . import goals
+        if not arg:
+            items = goals.mine()
+            return {"reply": ("Goals:\n" + "\n".join(f"- {g['text'][:80]} ({g['status']}, {g['requests']}/{g['max_requests']} requests)"
+                                                      for g in items)) if items else
+                    "No goals. Start one: /goal find 20 cafés in Jaipur without a website --budget 40", "action": "goals"}
+        m_b = re.search(r"--budget\s+(\d+)", arg)
+        g = goals.start(re.sub(r"--budget\s+\d+", "", arg).strip(), int(m_b.group(1)) if m_b else 30)
+        return {"reply": f"Working on it in the background (budget: {g['max_requests']} model requests). Follow it in "
+                         "Automations → Goals; I'll message you when it's done.", "action": "goal"}
     if cmd == "btw":
         return {"btw": arg}
     return None
@@ -630,6 +642,9 @@ def _finish(ctx: dict, reply: str, model: str) -> dict:
     used = sorted({int(x) for x in re.findall(r"#(\d+)", reply)} & {m["id"] for m in mems})
     db.audit("brain", "chat.reply", mode=mode, model=model, memories_recalled=[m["id"] for m in mems],
              knowledge=[k["source_id"] for k in know], web=bool(web_docs))
+    if not ctx.get("btw") and not ctx.get("private"):
+        from . import memory_engines
+        memory_engines.honcho_record(ctx["conversation"], message, reply)
     if ctx.get("btw"):
         pass
     elif ctx["background_extract"]:
@@ -663,6 +678,15 @@ def _tool_round(ctx: dict, reply: str) -> bool:
     return True
 
 
+def _apply_steering(ctx: dict, goals) -> bool:
+    """Notes the owner typed while this answer was still working go in before the next step."""
+    notes = goals.take_steering(ctx["conversation"])
+    if notes:
+        ctx["history"] = ctx["history"] + [{"role": "user", "content": "(The owner adds, while you work: "
+                                            + " / ".join(notes) + ") Take this into account from now on."}]
+    return bool(notes)
+
+
 def think(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
           background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
           channel: str = "", agent_id: str = "", attachments: list | None = None,
@@ -672,11 +696,17 @@ def think(message: str, mode: str = "mirror", conversation: str = "main", use_se
                    agent_id, attachments, tools_only)
     if "done" in ctx:
         return ctx["done"]
+    from . import goals
+    goals.aborted(ctx["conversation"])            # forget a Stop pressed after the last answer had finished
     model = "none"
     for _ in range(tools.MAX_ROUNDS + 1):
         reply, model = llm.chat(ctx["system"], ctx["history"], private=ctx["private"], max_tokens=ctx["max_tokens"],
                                 prefer=ctx["tool_ctx"].get("prefer"))
         if not _tool_round(ctx, reply):
+            break
+        _apply_steering(ctx, goals)
+        if goals.aborted(ctx["conversation"]):
+            reply = "Stopped, as you asked."
             break
     else:
         reply = tools.TOOL_RE.sub("", reply).strip() or "I tried several steps but couldn't finish. Try asking differently."
@@ -702,6 +732,8 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
         return
     if ctx["web_docs"]:
         yield "status", "Read the web, now answering…"
+    from . import goals
+    goals.aborted(ctx["conversation"])
     shown, model = [], "none"
     for _ in range(tools.MAX_ROUNDS + 1):
         filt = tools.ToolFilter()
@@ -723,6 +755,12 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
             break
         yield "status", TOOL_STATUS.get(call[0], "Working on it…")
         _tool_round(ctx, filt.raw)
+        if _apply_steering(ctx, goals):
+            yield "status", "Got your note, adjusting…"
+        if goals.aborted(ctx["conversation"]):
+            shown.append("\n\n(Stopped, as you asked.)")
+            yield "text", "\n\n(Stopped, as you asked.)"
+            break
         if shown and not "".join(shown).endswith(("\n", " ")):
             shown.append("\n\n")
             yield "text", "\n\n"
@@ -748,3 +786,8 @@ def clear_history(conversation: str = "main") -> None:
     with db.session() as conn:
         conn.execute("DELETE FROM messages WHERE conversation=?", (conversation,))
     db.audit("owner", "chat.clear", conversation=conversation)
+
+
+from . import tracing as _tracing  # noqa: E402
+think = _tracing.wrap("brain.think", think, lambda a, kw: {"mode": str(kw.get("mode", a[1] if len(a) > 1 else "mirror")),
+                                                           "channel": str(kw.get("channel", ""))})

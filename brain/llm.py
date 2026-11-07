@@ -277,6 +277,10 @@ def chat(system: str, messages: list[dict], private: bool = False, json_mode: bo
     Within each provider it tries the main model, then its backup models. A model that is busy (503)
     or out of quota (429) is skipped for a few minutes so later messages don't wait on it.
     """
+    try:
+        usage.check_limits()
+    except usage.OverBudget as exc:
+        raise ModelUnavailable(str(exc))
     chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
     errors = []
     for p in chain:
@@ -288,7 +292,7 @@ def chat(system: str, messages: list[dict], private: bool = False, json_mode: bo
                 reply = call(p | {"model": model}, system, messages, json_mode=json_mode, max_tokens=max_tokens)
                 if errors:
                     log.info("Answered by %s:%s after: %s", p["id"], model, "; ".join(errors))
-                usage.record(p["id"], model, True, time.time() - t0)
+                usage.record(p["id"], model, True, time.time() - t0, usage.estimate(system, messages, reply))
                 return reply, f"{p['id']}:{model}"
             except ProviderError as exc:
                 usage.record(p["id"], model, False)
@@ -390,6 +394,10 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
     """Like chat(), but yields ('text', piece) as the reply is written, then ('done', 'provider:model').
 
     Failover to the next model/provider happens only before the first words arrive."""
+    try:
+        usage.check_limits()
+    except usage.OverBudget as exc:
+        raise ModelUnavailable(str(exc))
     chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
     errors = []
     for p in chain:
@@ -398,11 +406,13 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
         for model in fresh or models[:1]:
             q = p | {"model": model}
             sent = False
+            streamed_chars = 0
             filt = ThoughtFilter()
             try:
                 if p["kind"] == "openai":
                     for piece in _stream_openai(q, system, messages, max_tokens):
                         clean = filt.feed(piece)
+                        streamed_chars += len(piece)
                         if clean:
                             sent = True
                             yield "text", clean
@@ -414,7 +424,7 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
                         raise ProviderError(p["id"], "empty reply")
                 else:   # Claude and Ollama: one piece (still fast, just not word by word)
                     yield "text", call(q, system, messages, max_tokens=max_tokens)
-                usage.record(p["id"], model, True)
+                usage.record(p["id"], model, True, 0.0, usage.estimate(system, messages) + streamed_chars // 4)
                 yield "done", f"{p['id']}:{model}"
                 return
             except ProviderError as exc:
@@ -712,3 +722,7 @@ def discover_all() -> list[dict]:
         else:
             out.append(discover(pid))
     return out
+
+
+from . import tracing as _tracing  # noqa: E402
+chat = _tracing.wrap("llm.chat", chat, lambda a, kw: {"private": bool(kw.get("private")), "messages": len(a[1]) if len(a) > 1 else 0})

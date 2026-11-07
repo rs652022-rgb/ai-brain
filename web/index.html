@@ -122,6 +122,7 @@
       <button type="button" id="attach" class="ghost" title="Attach a photo, PDF, document or voice recording" aria-label="Attach"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
       <input type="file" id="attach-file" multiple hidden accept="image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,audio/*">
       <button type="button" id="web-toggle" class="ghost" title="Search the web for this message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18"/></svg><span class="label">Web</span></button>
+      <button type="button" class="ghost" id="chat-stop" hidden title="Stop this answer">Stop</button>
       <button type="submit" class="primary" id="send" aria-label="Send"><span class="label">Send</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
   </section>
@@ -879,6 +880,7 @@
 <script src="/static/account.js"></script>
 <script src="/static/agentui.js"></script>
 <script src="/static/extras.js"></script>
+<script src="/static/more.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>

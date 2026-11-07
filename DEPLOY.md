@@ -89,6 +89,11 @@ Any Linux machine with Docker works, including a home mini-PC or a VPS. Follow O
 - **Browser agent:** build with Playwright: add `RUN pip install playwright && playwright install --with-deps chromium` to the Dockerfile (about 400 MB more).
 - **Python sandbox:** mount the Docker socket only if you understand the risk. Without Docker, code running is off on shared servers.
 - **Monitoring:** set `BRAIN_METRICS_TOKEN` and scrape `/metrics` with it as a Bearer token.
+- **Tracing:** `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`, then set `BRAIN_OTEL_ENDPOINT=http://<collector>:4318` (Jaeger, Grafana Tempo, SigNoz are free).
+- **Memory engines:** `pip install lancedb` for LanceDB; `pip install honcho-ai` and a Honcho address for Honcho.
+- **Gmail push:** each user sets it up in Automations with their own Google Cloud project. Google must reach `https://<your address>/api/gmail/push/...`.
+- **Viber and Webex:** after saving the bot token, press "Connect webhook" in Channels.
+- **Secrets vault:** the encryption key is `brain-data/.vault.key`. Back it up with the data folder, and keep it private.
 - **Android app:** Actions → Build Android app → enter your https address. See `mobile/README.md`.
 
 ## Safety notes

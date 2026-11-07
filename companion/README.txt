@@ -8,6 +8,7 @@ and an Android phone connected to it. Only you can link it, and only to your own
 2. Start the companion:
      Windows:        double-click start-companion.bat
      macOS / Linux:  run ./start-companion.sh
+     Menu-bar / tray version (no window): start-companion.bat --tray  or  ./start-companion.sh --tray
    (Needs Python 3.10+ from python.org the first time. The .exe version needs nothing.)
 3. Enter your Brain's web address and the pairing code. Leave the window open.
 

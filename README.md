@@ -120,12 +120,13 @@ Long chats are summarised automatically, so nothing important is lost.
 
 ## More features (Phases 2 and 3)
 
-**12 chat apps.**
+**27 chat apps.**
 - Telegram, Discord, Slack, email.
 - WhatsApp (Meta's official Cloud API).
 - Signal (through signal-cli-rest-api).
 - Matrix, Mattermost, IRC, Twitch chat.
 - SMS (Twilio) and LINE.
+- WeChat, WeCom, Feishu/Lark, DingTalk, QQ, Zalo, Nextcloud Talk, Synology Chat, Rocket.Chat, Zulip, Viber, Facebook Messenger, Instagram DMs, Webex and Nostr (encrypted DMs).
 
 WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be online over HTTPS. Every message they send is checked against the service's signature.
 
@@ -164,6 +165,27 @@ WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be 
 - Skills can be downloaded and shared as a .zip.
 
 **Monitoring.** Model requests per day in Master → Usage, and Prometheus metrics at `/metrics`.
+
+## Round 4 features
+
+**Chrome extension.** The Brain can use the tabs you're already signed in to (Chrome, Edge, Brave), only on sites you allow in the extension (each is a Chrome permission). Settings → Chrome extension → download, then chrome://extensions → Developer mode → Load unpacked.
+
+**Menu-bar / tray app.** The Brain Companion now also comes as a menu-bar app (macOS) and tray app (Windows, Linux): connection status, Open my Brain, Pause control, Unlink, Quit. Built by GitHub Actions as `BrainTray-*`, or run `start-companion --tray`.
+
+**Coding tools.** Git workspaces (Skills → Code workspaces): the Brain reads, searches and patches files, or makes a branch per task. You review every change in the diff viewer and keep (commit) or discard it. It never pushes.
+
+**Steering and goals.**
+- While an answer is still working, whatever you type steers it ("only free options"); Stop ends it.
+- Goals (Automations → Goals, or `/goal … --budget 40`): a bigger job it works on by itself until done, with a budget of model requests and tokens. Pause, steer, stop, or add budget.
+- Daily limits for the whole Brain.
+
+**Secrets vault.** Save passwords (encrypted) or point to 1Password / Bitwarden. The Brain only knows the name and writes `{{secret:github}}`; the value is filled in inside the browser, only on the sites you listed, over https. Every use is logged and notifies you.
+
+**Memory engines and tracing.** Optional LanceDB vector search, optional Honcho (experimental) for a deeper understanding of you, and OpenTelemetry traces (`BRAIN_OTEL_ENDPOINT`) for Jaeger, Grafana Tempo or SigNoz. Traces never carry your chat text.
+
+**Skill marketplace.** Search ClawHub (OpenClaw's public skill registry, flagged skills hidden) and add skills; they arrive as "suggested" for you to read first. On a shared server people can publish skills to the server's shelf; the admin approves them.
+
+**Gmail push alerts.** Gmail tells the Brain the moment mail arrives (Google's free Gmail API + Pub/Sub, your own Cloud project, read-only access). Needs the Brain online over HTTPS; on a laptop the 2-minute email watcher still works.
 
 ## Device control (your computer and phone)
 

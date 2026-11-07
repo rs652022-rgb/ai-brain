@@ -601,3 +601,4 @@ def status() -> dict:
 
 
 from . import channels_more  # noqa: E402,F401  (registers WhatsApp, Signal, Matrix, Mattermost, IRC, Twitch, SMS, LINE)
+from . import channels_extra  # noqa: E402,F401  (WeChat, WeCom, Feishu, DingTalk, QQ, Zalo, Nextcloud, Synology, Rocket.Chat, Zulip, Viber, Messenger, Instagram, Webex, Nostr)

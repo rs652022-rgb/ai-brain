@@ -30,6 +30,9 @@ VERSION = "1.0"
 
 from brain import control, devices  # noqa: E402  (after the path setup above)
 
+# Shared with the menu-bar / tray app (brain_tray.py)
+STATE = {"connected": False, "paused": False, "text": "Starting…", "user": "", "last": ""}
+
 
 def load_cfg() -> dict:
     try:
@@ -47,7 +50,11 @@ def save_cfg(cfg: dict) -> None:
 
 
 def say(msg: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    STATE["last"] = msg
+    try:
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    except (OSError, ValueError, AttributeError):      # windowed app: no console
+        pass
 
 
 def pair(cfg: dict) -> dict:
@@ -128,6 +135,7 @@ def serve(cfg: dict) -> None:
                     msg = json.loads(raw)
                     if msg.get("type") == "welcome":
                         delay = 2
+                        STATE.update(connected=True, user=msg["user"], text=f"Connected to {msg['user']}'s Brain")
                         say(f"✓ Connected to {msg['user']}'s Brain as \"{msg['device']}\". Leave this window open.")
                         say("  Close this window or press Ctrl+C to stop all control.")
                         continue
@@ -139,7 +147,8 @@ def serve(cfg: dict) -> None:
                         continue
                     if "id" in msg:
                         def work(m=msg):
-                            reply = handle(m)
+                            reply = ({"id": m["id"], "ok": False, "error": "Control is paused on this computer."}
+                                     if STATE["paused"] else handle(m))
                             with lock:
                                 ws.send(json.dumps(reply))
                         threading.Thread(target=work, daemon=True).start()
@@ -148,6 +157,7 @@ def serve(cfg: dict) -> None:
         except KeyboardInterrupt:
             raise
         except Exception as exc:
+            STATE.update(connected=False, text="Not connected, retrying…")
             say(f"Not connected ({exc.__class__.__name__}: {str(exc)[:120]}). Retrying in {delay}s…")
             time.sleep(delay)
             delay = min(60, delay * 2)

@@ -15,3 +15,7 @@ pillow>=10.0
 pygetwindow>=0.0.9; sys_platform == "win32"
 # Push notifications
 pywebpush>=2.0
+# Secrets vault, WeCom/Feishu/Nostr encryption
+cryptography>=42
+coincurve>=20
+# Optional: lancedb (vector memory), honcho-ai (Honcho), opentelemetry-sdk + opentelemetry-exporter-otlp-proto-http (tracing)
