@@ -274,6 +274,13 @@ function forgetPicker(f) {
   return box;
 }
 
+// "first words 0.8 s · done 2.4 s": how quickly the reply came, to compare models.
+function replyTime(t) {
+  if (!t || t.first_ms == null) return "";
+  const s = (ms) => `${(ms / 1000).toFixed(1)} s`;
+  return `first words ${s(t.first_ms)} · done ${s(t.total_ms)}`;
+}
+
 function replyExtras(r) {
   const extra = el("div", {});
   if (r.media?.length) extra.append(mediaBox(r.media.map((x) => x.url)));
@@ -294,11 +301,12 @@ function replyExtras(r) {
   }
   const recalled = [...(r.memories_used || []).map((m) => `#${m.id} ${m.content.slice(0, 140)}`),
                     ...(r.knowledge_used || []).map((k) => `Learned: ${k.title}`)];
+  const label = [r.model, replyTime(r.timing)].filter(Boolean).join(" · ");
   if (recalled.length) {
-    extra.append(el("details", {}, el("summary", {}, `${recalled.length} memories/knowledge recalled · ${r.model}`),
+    extra.append(el("details", {}, el("summary", {}, `${recalled.length} memories/knowledge recalled · ${label}`),
       ...recalled.map((t) => el("div", {}, t))));
   } else if (r.model && r.model !== "none") {
-    extra.append(el("div", { class: "meta" }, r.model));
+    extra.append(el("div", { class: "meta", title: "First words: how long until it started answering" }, label));
   }
   return extra;
 }

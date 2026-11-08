@@ -14,14 +14,25 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import httpx
-
-from . import config, settings, usage
+from . import config, netpool as httpx, settings, usage    # one kept-open connection pool, used like httpx
 from .providers import PRESETS
 
 log = logging.getLogger("brain.llm")
-TIMEOUT = httpx.Timeout(60, connect=10)
+TIMEOUT = httpx.Timeout(60, connect=6)
 TEST_TIMEOUT = httpx.Timeout(25, connect=8)
+EMBED_TIMEOUT = httpx.Timeout(4, connect=2)    # slower than this: search by words instead of waiting
+
+
+def stream_timeout(p: dict, voice: bool = False) -> "httpx.Timeout":
+    """How long to wait for the first words (and between words) before trying the next model.
+    A stuck or overloaded model used to hold every reply for up to a minute."""
+    if p.get("kind") == "ollama":
+        wait = 60                                    # a local model may first need loading into memory
+    elif settings.load().get("thinking", "fast") in ("low", "high"):
+        wait = 30                                    # you asked it to think first
+    else:
+        wait = 8 if voice else 12
+    return httpx.Timeout(connect=5, read=wait, write=10, pool=5)
 
 
 class ModelUnavailable(RuntimeError):
@@ -295,7 +306,13 @@ def _chain(only: list[str] | None = None, prefer: tuple[str, str] | None = None)
         if not local and config.allow_private() and "ollama" not in [p["id"] for p in chain]:
             local = [settings.resolved("ollama")]
         return local
-    return chain
+    return _resting_last(chain)
+
+
+def _resting_last(chain: list[dict]) -> list[dict]:
+    """Providers whose every model is resting go to the back: tried only if nothing else answers."""
+    resting = [p for p in chain if all(cooling(p["id"], m) for m in models_for(p))]
+    return [p for p in chain if p not in resting] + resting
 
 
 def _chain_all(only: list[str] | None = None, prefer: tuple[str, str] | None = None) -> list[dict]:
@@ -396,7 +413,7 @@ class ThoughtFilter:
         return rest
 
 
-def _stream_openai(p: dict, system: str, messages: list[dict], max_tokens: int):
+def _stream_openai(p: dict, system: str, messages: list[dict], max_tokens: int, timeout=None):
     pid = p["id"]
     headers = {"Authorization": f"Bearer {p['api_key']}"} if p["api_key"] else {}
     if pid == "openrouter":
@@ -406,7 +423,7 @@ def _stream_openai(p: dict, system: str, messages: list[dict], max_tokens: int):
     for opt in reasoning_options(pid, p["model"]):
         try:
             with httpx.stream("POST", f"{p['base_url']}/chat/completions", headers=headers, json=payload | opt,
-                              timeout=TIMEOUT) as r:
+                              timeout=timeout or TIMEOUT) as r:
                 if r.status_code >= 400:
                     r.read()
                     _raise_for(pid, r)
@@ -435,8 +452,89 @@ def _stream_openai(p: dict, system: str, messages: list[dict], max_tokens: int):
             raise ProviderError(pid, f"cannot connect ({exc.__class__.__name__})") from exc
 
 
+def _ready(p: dict) -> None:
+    if p["needs_key"] and not p["api_key"]:
+        raise ProviderError(p["id"], "no API key set")
+    if not p["model"]:
+        raise ProviderError(p["id"], "no model set")
+
+
+def _stream_anthropic(p: dict, system: str, messages: list[dict], max_tokens: int, timeout=None):
+    """Claude, word by word (it used to arrive in one piece at the end)."""
+    pid = p["id"]
+    _ready(p)
+    payload = {"model": p["model"], "max_tokens": max_tokens, "system": system, "messages": messages, "stream": True}
+    headers = {"x-api-key": p["api_key"], "anthropic-version": "2023-06-01"}
+    try:
+        with httpx.stream("POST", f"{p['base_url']}/messages", headers=headers, json=payload,
+                          timeout=timeout or TIMEOUT) as r:
+            if r.status_code >= 400:
+                r.read()
+                _raise_for(pid, r)
+            for line in r.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+                kind = ev.get("type")
+                if kind == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
+                    if ev["delta"].get("text"):
+                        yield ev["delta"]["text"]
+                elif kind == "error":
+                    raise ProviderError(pid, f"model busy ({str(ev.get('error'))[:160]})", status=503)
+                elif kind == "message_stop":
+                    return
+    except httpx.HTTPError as exc:
+        raise ProviderError(pid, f"cannot connect ({exc.__class__.__name__})") from exc
+
+
+def _stream_ollama(p: dict, system: str, messages: list[dict], timeout=None):
+    """The local model, word by word."""
+    pid = p["id"]
+    _ready(p)
+    payload = {"model": p["model"], "stream": True, "think": False,
+               "messages": [{"role": "system", "content": system}, *messages]}
+    for attempt in (payload, {k: v for k, v in payload.items() if k != "think"}):   # older Ollama: no "think"
+        try:
+            with httpx.stream("POST", f"{p['base_url']}/api/chat", json=attempt, timeout=timeout or TIMEOUT) as r:
+                if r.status_code >= 400:
+                    r.read()
+                    _raise_for(pid, r)
+                for line in r.iter_lines():
+                    try:
+                        data = json.loads(line)
+                    except ValueError:
+                        continue
+                    piece = (data.get("message") or {}).get("content") or ""
+                    if piece:
+                        yield piece
+                    if data.get("done"):
+                        return
+            return
+        except ProviderError as exc:
+            if exc.status != 400 or "think" not in attempt:
+                raise
+        except httpx.HTTPError as exc:
+            raise ProviderError(pid, f"cannot connect ({exc.__class__.__name__})") from exc
+
+
+def _stream_one(p: dict, system: str, messages: list[dict], max_tokens: int, voice: bool):
+    if p["kind"] not in ("openai", "anthropic", "ollama"):
+        return iter([call(p, system, messages, max_tokens=max_tokens)])
+    timeout = stream_timeout(p, voice)
+    if any(isinstance(m.get("content"), list) for m in messages):
+        messages = _with_images(p["kind"], messages)
+    if p["kind"] == "openai":
+        return _stream_openai(p, system, messages, max_tokens, timeout)
+    if p["kind"] == "anthropic":
+        return _stream_anthropic(p, system, messages, max_tokens, timeout)
+    return _stream_ollama(p, system, messages, timeout)
+
+
 def chat_stream(system: str, messages: list[dict], private: bool = False, max_tokens: int = 1200,
-                prefer: tuple[str, str] | None = None):
+                prefer: tuple[str, str] | None = None, voice: bool = False):
     """Like chat(), but yields ('text', piece) as the reply is written, then ('done', 'provider:model').
 
     Failover to the next model/provider happens only before the first words arrive."""
@@ -455,21 +553,18 @@ def chat_stream(system: str, messages: list[dict], private: bool = False, max_to
             streamed_chars = 0
             filt = ThoughtFilter()
             try:
-                if p["kind"] == "openai":
-                    for piece in _stream_openai(q, system, messages, max_tokens):
-                        clean = filt.feed(piece)
-                        streamed_chars += len(piece)
-                        if clean:
-                            sent = True
-                            yield "text", clean
-                    tail = filt.flush()
-                    if tail:
+                for piece in _stream_one(q, system, messages, max_tokens, voice):
+                    clean = filt.feed(piece)
+                    streamed_chars += len(piece)
+                    if clean:
                         sent = True
-                        yield "text", tail
-                    if not sent:
-                        raise ProviderError(p["id"], "empty reply")
-                else:   # Claude and Ollama: one piece (still fast, just not word by word)
-                    yield "text", call(q, system, messages, max_tokens=max_tokens)
+                        yield "text", clean
+                tail = filt.flush()
+                if tail:
+                    sent = True
+                    yield "text", tail
+                if not sent:
+                    raise ProviderError(p["id"], "empty reply")
                 usage.record(p["id"], model, True, 0.0, usage.estimate(system, messages) + streamed_chars // 4)
                 yield "done", f"{p['id']}:{model}"
                 return
@@ -656,20 +751,25 @@ def _embed_uncached(text: str) -> list[float] | None:
     if pid == "none":
         return None
     p = settings.resolved(pid)
-    if not settings.url_allowed(p["base_url"]):
+    if not settings.url_allowed(p["base_url"]) or cooling(pid, "embed"):
         return None
     try:
         if p["kind"] == "ollama":
             data = _post(pid, f"{p['base_url']}/api/embed", {}, {"model": p["embed_model"] or "nomic-embed-text",
-                                                                  "input": text})
+                                                                  "input": text}, EMBED_TIMEOUT)
             vecs = data.get("embeddings") or []
             return vecs[0] if vecs else None
         if not p["embed_model"]:
             return None
         data = _post(pid, f"{p['base_url']}/embeddings", {"Authorization": f"Bearer {p['api_key']}"},
-                     {"model": p["embed_model"], "input": text})
+                     {"model": p["embed_model"], "input": text}, EMBED_TIMEOUT)
         return data["data"][0]["embedding"]
-    except (ProviderError, KeyError, IndexError) as exc:
+    except ProviderError as exc:
+        if exc.status in (0, 429, 500, 502, 503, 504):     # slow or busy: don't wait on it again for a while
+            cool_down(pid, "embed", exc.status)
+        log.info("Embedding skipped, using keyword search: %s", exc)
+        return None
+    except (KeyError, IndexError) as exc:
         log.info("Embedding skipped, using keyword search: %s", exc)
         return None
 

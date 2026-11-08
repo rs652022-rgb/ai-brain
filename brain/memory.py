@@ -201,10 +201,15 @@ def _recency(created_at: str) -> float:
     return math.exp(-age_days / 180)  # half-weight after about four months
 
 
+def _any_memories() -> bool:
+    with db.session() as conn:
+        return conn.execute("SELECT 1 FROM memories LIMIT 1").fetchone() is not None
+
+
 def search(query: str, limit: int = config.RECALL_LIMIT, include_sealed: bool = False) -> list[dict]:
     """Hybrid recall: meaning (embeddings) and words, with a strict relevance bar."""
-    if is_small_talk(query):
-        return []
+    if is_small_talk(query) or not _any_memories():
+        return []                                  # nothing to find: don't wait on an embedding call
     qvec, qlabel = _embed(query)
     qwords = _keywords(query)
     from . import memory_engines

@@ -15,6 +15,7 @@ import logging
 import json
 import re
 import threading
+import time
 from datetime import datetime
 
 from . import agent, config, control, db, identity, knowledge, llm, master, memory, settings, tools, web
@@ -681,7 +682,7 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
     return {"message": message, "mode": mode, "conversation": conversation, "mems": mems, "know": know,
             "web_docs": web_docs, "web_note": web_note, "private": private, "system": system,
             "history": _history(conversation) + [user_msg], "files": files, "agent": persona,
-            "max_tokens": 350 if voice else 1200, "background_extract": background_extract,
+            "max_tokens": 350 if voice else 1200, "background_extract": background_extract, "voice": voice,
             "tool_ctx": tool_ctx, "btw": btw}
 
 
@@ -783,7 +784,9 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
                  channel: str = "", agent_id: str = "", attachments: list | None = None):
     """One turn, streamed: yields ('text', piece) as the reply is written, ('status', note) while tools run,
     then ('final', result). If the page hangs up early (you talked over the voice), the reply is saved
-    as far as you heard it, marked [interrupted]."""
+    as far as you heard it, marked [interrupted]. The result says how long the first words and the
+    whole reply took (timing, in milliseconds)."""
+    started = time.perf_counter()
     ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
                    agent_id, attachments)
     if "done" in ctx:
@@ -798,15 +801,21 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
     whose = contextvars.copy_context()            # the page may hang up while another thread holds us
     key = (config.user_key(), ctx["conversation"])
     _heard.pop(key, None)
-    shown = []
+    shown, first = [], None
+    ready_ms = round((time.perf_counter() - started) * 1000)
     try:
-        yield from _stream_rounds(ctx, goals, shown)
+        for kind, value in _stream_rounds(ctx, goals, shown):
+            if kind == "text" and first is None:
+                first = round((time.perf_counter() - started) * 1000)
+            yield kind, value
     except GeneratorExit:
         heard = _heard.pop(key, None)
         said = heard if heard is not None else "".join(shown).strip()
         whose.run(_finish, ctx, f"{said} {INTERRUPTED}".strip(), ctx.get("model", "none"))
         raise
-    yield "final", _finish(ctx, "".join(shown).strip(), ctx.get("model", "none"))
+    result = _finish(ctx, "".join(shown).strip(), ctx.get("model", "none"))
+    yield "final", result | {"timing": {"ready_ms": ready_ms, "first_ms": first,
+                                        "total_ms": round((time.perf_counter() - started) * 1000)}}
 
 
 def _stream_rounds(ctx: dict, goals, shown: list):
@@ -814,7 +823,8 @@ def _stream_rounds(ctx: dict, goals, shown: list):
     for _ in range(tools.MAX_ROUNDS + 1):
         filt = tools.ToolFilter()
         for kind, value in llm.chat_stream(ctx["system"], ctx["history"], private=ctx["private"],
-                                           max_tokens=ctx["max_tokens"], prefer=ctx["tool_ctx"].get("prefer")):
+                                           max_tokens=ctx["max_tokens"], prefer=ctx["tool_ctx"].get("prefer"),
+                                           voice=ctx.get("voice", False)):
             if kind == "text":
                 safe = filt.feed(value)
                 if safe:
