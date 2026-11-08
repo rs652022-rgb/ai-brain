@@ -337,7 +337,9 @@
         <label>Browser voice
           <select id="v-bvoice"><option value="">Automatic (Indian English if available)</option></select></label>
         <label>Speaking speed <input type="range" id="v-rate" min="0.7" max="1.5" step="0.05"></label>
-        <label class="check"><input type="checkbox" id="v-barge" checked> Let me interrupt: in a conversation, the Brain stops talking when I start (works best with headphones)</label>
+        <label class="check"><input type="checkbox" id="v-barge" checked> Let me interrupt: the Brain stops talking the moment I start, and listens (works best with headphones)</label>
+        <label>Wait before answering
+          <select id="v-patience"><option value="quick">Quick: answer soon after I stop</option><option value="normal">Normal: let me finish my thought</option><option value="relaxed">Relaxed: I pause a lot while thinking</option></select></label>
         <label>Local Whisper size
           <select id="v-wmodel"><option value="tiny">Tiny: fastest</option><option value="base">Base: good balance</option>
             <option value="small">Small: more accurate</option><option value="medium">Medium: best, needs a strong laptop</option></select></label>
@@ -813,7 +815,18 @@
           <label class="field wide">Quick prompts (one per line)<textarea id="m-suggest" rows="3"></textarea></label>
           <label class="field">Start in this mode
             <select id="m-mode"><option value="mirror">Mirror</option><option value="assistant">Assistant</option><option value="coach">Coach</option></select></label>
+          <label class="field">Gender
+            <select id="m-gender"><option value="male">Male: "main karunga, bataunga"</option><option value="female">Female: "main karungi, bataungi"</option></select></label>
+          <div class="field wide">Personality (pick any)
+            <div class="switches" id="m-traits">
+              <label class="check"><input type="checkbox" value="calm"> Calm</label>
+              <label class="check"><input type="checkbox" value="caring"> Caring</label>
+              <label class="check"><input type="checkbox" value="understanding"> Understanding</label>
+              <label class="check"><input type="checkbox" value="sharp"> Sharp</label>
+            </div></div>
+          <label class="field wide">Anything else about how it behaves (optional)<input id="m-behavior" maxlength="300" placeholder="For example: cheer me up when I'm low, and be honest even when it's hard to hear"></label>
         </div>
+        <p class="hint" style="margin-top:12px">Gender sets how it talks about itself in Hindi (karunga or karungi) and switches the natural voice to a male or female one.</p>
         <p class="hint" style="margin-top:12px">In the greeting, <code>{first}</code> becomes your first name and <code>{name}</code> becomes the Brain's name.</p>
       </div>
 

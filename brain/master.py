@@ -19,6 +19,9 @@ DEFAULTS = {
     "subtitle": "Talk it through out loud or type. I answer from your memories, in your own way of thinking.",
     "suggestions": ["How was my week?", "Help me plan tomorrow", "What did I decide about pricing?"],
     "default_mode": "mirror",
+    "personality": [],                       # any of PERSONALITIES; empty = the mode's own manner
+    "behavior_note": "",                     # the owner's own words on how the Brain should behave
+    "gender": "male",                        # male | female: Hindi verb forms and the voice
     "theme": "blueprint",                    # blueprint (light, cobalt) | midnight (dark)
     "accent": "#ffd84a",                     # signal colour
     "wake_words": ["hey brain"],             # wake the Brain from rest, and the voice wake word
@@ -31,10 +34,13 @@ DEFAULTS = {
     "pin_hash": "",
     "pin_salt": "",
 }
-PUBLIC_KEYS = ("brain_name", "owner_name", "greeting", "subtitle", "suggestions", "default_mode", "theme",
+PUBLIC_KEYS = ("brain_name", "owner_name", "greeting", "subtitle", "suggestions", "default_mode", "personality",
+               "behavior_note", "gender", "theme",
                "accent", "wake_words", "sleep_words", "stop_words", "resting", "features", "lock_app", "timezone")
 THEMES = ("blueprint", "midnight")
 MODES = ("mirror", "assistant", "coach")
+PERSONALITIES = ("calm", "caring", "understanding", "sharp")
+GENDERS = ("male", "female")
 
 _lock = threading.Lock()
 
@@ -85,6 +91,14 @@ def update(changes: dict) -> dict:
             m["suggestions"] = [str(s).strip()[:80] for s in items if str(s).strip()][:6]
         if changes.get("default_mode") in MODES:
             m["default_mode"] = changes["default_mode"]
+        if "personality" in changes:
+            picked = changes["personality"] if isinstance(changes["personality"], list) else []
+            m["personality"] = [p for p in PERSONALITIES if p in picked]
+        if "behavior_note" in changes:
+            m["behavior_note"] = re.sub(r"\s+", " ", str(changes["behavior_note"])).strip()[:300]
+        if changes.get("gender") in GENDERS and changes["gender"] != m["gender"]:
+            m["gender"] = changes["gender"]
+            _match_voice(data, m["gender"])
         if changes.get("theme") in THEMES:
             m["theme"] = changes["theme"]
         if "accent" in changes and re.fullmatch(r"#[0-9a-fA-F]{6}", str(changes["accent"])):
@@ -112,6 +126,15 @@ def update(changes: dict) -> dict:
 
 def set_resting(on: bool) -> None:
     update({"resting": on})
+
+
+def _match_voice(data: dict, gender: str) -> None:
+    """A new gender also switches the natural voice to the same voice's other-gender partner."""
+    from .voice import DEFAULTS as VOICE_DEFAULTS, VOICE_GENDER, gender_partner
+    voice = dict(data.get("voice") or {})
+    current = voice.get("edge_voice") or VOICE_DEFAULTS["edge_voice"]
+    if VOICE_GENDER.get(current) not in (None, gender):
+        data["voice"] = voice | {"edge_voice": gender_partner(current)}
 
 
 def owner_name() -> str:

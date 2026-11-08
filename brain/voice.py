@@ -37,6 +37,7 @@ DEFAULTS = {
     "browser_voice": "",          # a voice name from the browser list, or "" for automatic
     "rate": 1.0,
     "barge_in": True,             # in a conversation, stop talking when the owner starts
+    "patience": "normal",         # quick | normal | relaxed: how long to wait after the owner goes quiet
 }
 
 
@@ -49,6 +50,8 @@ def cfg() -> dict:
     if saved.get("tts") == "browser" and "edge_voice" not in saved:
         saved = saved | {"tts": "edge"}   # saved before the natural voice existed: upgrade to it
     out = DEFAULTS | saved
+    if out.get("patience") not in ("quick", "normal", "relaxed"):
+        out["patience"] = "normal"
     from . import master
     words = master.get()["wake_words"]
     if words:
@@ -206,6 +209,20 @@ HINDI_PARTNER = {
     "en-IN-NeerjaExpressiveNeural": "hi-IN-SwaraNeural",
     "en-GB-RyanNeural": "hi-IN-MadhurNeural",
 }
+# Each natural voice and its partner of the other gender, used when the Brain's gender is changed.
+_PAIRS = (("en-IN-PrabhatNeural", "en-IN-NeerjaNeural"), ("hi-IN-MadhurNeural", "hi-IN-SwaraNeural"),
+          ("en-US-AndrewMultilingualNeural", "en-US-EmmaMultilingualNeural"),
+          ("en-US-BrianMultilingualNeural", "en-US-AvaMultilingualNeural"))
+VOICE_GENDER = {m: "male" for m, _ in _PAIRS} | {f: "female" for _, f in _PAIRS} | {
+    "en-IN-NeerjaExpressiveNeural": "female", "en-GB-RyanNeural": "male"}
+_PARTNER = {m: f for m, f in _PAIRS} | {f: m for m, f in _PAIRS} | {
+    "en-IN-NeerjaExpressiveNeural": "en-IN-PrabhatNeural", "en-GB-RyanNeural": "en-IN-NeerjaNeural"}
+
+
+def gender_partner(voice: str) -> str:
+    return _PARTNER.get(voice, voice)
+
+
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
 

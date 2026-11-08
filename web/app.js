@@ -825,6 +825,8 @@ function renderMaster(m) {
   $("#m-brain").value = m.brain_name; $("#m-owner").value = m.owner_name;
   $("#m-greeting").value = m.greeting_template || ""; $("#m-subtitle").value = m.subtitle;
   $("#m-suggest").value = (m.suggestions || []).join("\n"); $("#m-mode").value = m.default_mode;
+  $("#m-gender").value = m.gender || "male"; $("#m-behavior").value = m.behavior_note || "";
+  $$("#m-traits input").forEach((box) => { box.checked = (m.personality || []).includes(box.value); });
   $("#m-wake").value = (m.wake_words || []).join(", "); $("#m-sleep").value = (m.sleep_words || []).join(", ");
   $("#m-stop").value = (m.stop_words || []).join(", ");
   $("#f-web").checked = m.features.web !== false; $("#f-learning").checked = m.features.learning !== false;
@@ -856,6 +858,8 @@ $("#m-save").addEventListener("click", async () => {
   const changes = {
     brain_name: $("#m-brain").value, owner_name: $("#m-owner").value, greeting: $("#m-greeting").value,
     subtitle: $("#m-subtitle").value, suggestions: $("#m-suggest").value, default_mode: $("#m-mode").value,
+    gender: $("#m-gender").value, behavior_note: $("#m-behavior").value,
+    personality: [...$$("#m-traits input")].filter((box) => box.checked).map((box) => box.value),
     wake_words: $("#m-wake").value, sleep_words: $("#m-sleep").value, stop_words: $("#m-stop").value,
     theme: $("#m-theme").value, accent: M.accent, lock_app: $("#m-lockapp").checked,
     features: { web: $("#f-web").checked, learning: $("#f-learning").checked, voice: $("#f-voice").checked,

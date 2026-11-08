@@ -88,6 +88,7 @@ class Speaker {
   constructor() {
     this.buf = ""; this.queue = []; this.cancelled = false; this.ended = false;
     this.heard = [];      // sentences you have heard (or started hearing), for when you interrupt
+    this.said = "";       // everything queued to be said, so its own voice in the mic isn't taken for you
     this.pushed = 0;
     // After a failure, use the browser voice for 30 seconds, then try the natural voice again.
     this.server = (V.cfg.tts === "edge" || V.cfg.tts === "piper" || V.cfg.tts === "freellmapi") && Date.now() - (V.serverVoiceDown || 0) > 30000;
@@ -112,6 +113,7 @@ class Speaker {
     const text = speechText(sentence);
     if (!text) return;
     this.pushed++;
+    this.said += " " + text;
     // Start fetching the audio now, so it's ready when its turn comes.
     const item = { text, url: this.server ? fetchVoice(text).catch((e) => { this.fallback(e); return null; }) : null };
     this.queue.push(item);
@@ -201,19 +203,19 @@ async function listenServer() {
   await new Promise((resolve) => {
     recorder.onstop = resolve;
     recorder.start(250);
-    const tick = () => {
-      if (recorder.state !== "recording") return;
+    const timer = setInterval(() => {
+      if (recorder.state !== "recording") return clearInterval(timer);
       const rms = meter.level(), now = performance.now();
       if (!heard && now - started < 300) floor = Math.max(0.004, (floor + rms) / 2);   // the room's own level
       if (rms > Math.max(0.015, floor * 2.5)) { heard = true; quietSince = now; speechMs += now - last; }
       last = now;
       // A short "yes" may be followed by more, so wait a little longer after very short speech.
-      const pause = speechMs < 900 ? 1100 : 750;
+      const pause = turnEndDelay(speechMs < 900 ? "yes" : "I am done.");
       const silentFor = now - quietSince, total = now - started;
-      if ((heard && silentFor > pause) || (!heard && total > 8000) || total > 60000 || V.stopFlag) recorder.stop();
-      else requestAnimationFrame(tick);
-    };
-    tick();
+      if ((heard && silentFor > pause) || (!heard && total > 8000) || total > 90000 || V.stopFlag) {
+        clearInterval(timer); recorder.stop();
+      }
+    }, DUPLEX.TICK_MS);
   });
   meter.close(); V.recorder = null;
   if (!V.talk) releaseMic();            // in a conversation the mic stays open for the next turn
@@ -233,7 +235,8 @@ async function listenOnce() {
   try {
     if (V.cfg.stt !== "browser") return await listenServer();
     if (!SR) return await listenBrowser();          // shows the "use Chrome or Edge" message
-    return await listenBrowserTurn(langCode(), (t) => { $("#chat-input").value = t; });
+    const prefix = DUPLEX.carry; DUPLEX.carry = "";
+    return await listenBrowserTurn(langCode(), (t) => { $("#chat-input").value = t; }, prefix);
   } finally { $("#mic").classList.remove("rec"); }
 }
 
@@ -254,12 +257,12 @@ async function handleSpoken(text, { speakReply }) {
   if (speaker) V.speaker = speaker;
   const ctl = new AbortController();
   // In a conversation you can talk over the Brain: it stops at once and listens.
-  let unwatch = null, interrupted = false;
-  if (speaker && V.talk && V.cfg.barge_in !== false) {
-    watchBargeIn(() => { interrupted = true; interrupt(speaker, ctl); }).then((stop) => {
-      if (interrupted || speaker.cancelled) stop(); else unwatch = stop;
-    });
-  }
+  let interrupted = false;
+  DUPLEX.carry = "";
+  const watching = speaker && V.cfg.barge_in !== false
+    ? watchBargeIn(() => { interrupted = true; interrupt(speaker, ctl); },
+        { saying: () => speaker.said, lang: langCode(), words: V.cfg.stt === "browser" })
+    : null;
   try {
     const r = await sendChat(null, { text, spoken: true, signal: ctl.signal, onText: speaker ? (t) => speaker.feed(t) : null });
     if (speaker && !interrupted) {
@@ -268,7 +271,12 @@ async function handleSpoken(text, { speakReply }) {
       await speaker.done;
     }
     return interrupted ? { ...r, interrupted: true } : r;
-  } finally { unwatch?.(); }
+  } catch (e) {
+    if (interrupted) return { interrupted: true };    // the answer was stopped on purpose
+    throw e;
+  } finally {
+    if (watching) await (await watching)();         // frees the microphone for your next turn
+  }
 }
 
 // You talked over the Brain: stop the voice and the answer, and keep only what you heard in the chat.
@@ -286,8 +294,8 @@ async function micOnce() {
   if (V.busy) { stopListening(); stopSpeaking(); return; }
   V.busy = true; V.stopFlag = false;
   try {
-    const text = await listenOnce();
-    await handleSpoken(text, { speakReply: wantsSpeech() });
+    let r = await handleSpoken(await listenOnce(), { speakReply: wantsSpeech() });
+    while (r?.interrupted && !V.stopFlag) r = await handleSpoken(await listenOnce(), { speakReply: wantsSpeech() });
   } catch (e) { note("#v-note", e.message, true); addMsg("assistant", `⚠ ${e.message}`); }
   finally { V.busy = false; if (!V.talk && !V.wake) showBar(""); }
 }
@@ -394,6 +402,7 @@ function renderVoiceSettings() {
   $("#v-stt").value = c.stt; $("#v-tts").value = c.tts; $("#v-lang").value = c.language;
   $("#v-rate").value = c.rate; $("#v-wmodel").value = c.whisper_model;
   $("#v-barge").checked = c.barge_in !== false;
+  $("#v-patience").value = c.patience || "normal";
   $("#v-pvoice").value = c.piper_voice;
   const ev = V.caps.edge_voices || {};
   $("#v-evoice").replaceChildren(...Object.entries(ev).map(([id, label]) => el("option", { value: id }, label)));
@@ -422,7 +431,8 @@ function readVoiceSettings() {
   return { ...V.cfg, stt: $("#v-stt").value, tts: $("#v-tts").value, language: $("#v-lang").value,
     rate: Number($("#v-rate").value),
     whisper_model: $("#v-wmodel").value, edge_voice: pick("#v-evoice", V.cfg.edge_voice), piper_voice: $("#v-pvoice").value.trim() || "en_US-lessac-medium",
-    browser_voice: $("#v-bvoice").value, barge_in: $("#v-barge").checked, speak_replies: V.cfg.speak_replies !== false };
+    browser_voice: $("#v-bvoice").value, barge_in: $("#v-barge").checked,
+    patience: $("#v-patience").value || "normal", speak_replies: V.cfg.speak_replies !== false };
 }
 
 const _origSave = saveSettings;
