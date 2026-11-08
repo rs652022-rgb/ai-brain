@@ -337,6 +337,7 @@
         <label>Browser voice
           <select id="v-bvoice"><option value="">Automatic (Indian English if available)</option></select></label>
         <label>Speaking speed <input type="range" id="v-rate" min="0.7" max="1.5" step="0.05"></label>
+        <label class="check"><input type="checkbox" id="v-barge" checked> Let me interrupt: in a conversation, the Brain stops talking when I start (works best with headphones)</label>
         <label>Local Whisper size
           <select id="v-wmodel"><option value="tiny">Tiny: fastest</option><option value="base">Base: good balance</option>
             <option value="small">Small: more accurate</option><option value="medium">Medium: best, needs a strong laptop</option></select></label>
@@ -881,6 +882,7 @@
 <script src="/static/agentui.js"></script>
 <script src="/static/extras.js"></script>
 <script src="/static/more.js"></script>
+<script src="/static/voice-duplex.js"></script>
 <script src="/static/voice.js"></script>
 </body>
 </html>

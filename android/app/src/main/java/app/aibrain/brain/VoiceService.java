@@ -223,6 +223,9 @@ public class VoiceService extends Service implements RecognitionListener {
             @Override public void onError(String id) { main.post(VoiceService.this::resume); }
         });
         setState("Answering…");
+        // Hindi in Devanagari is read by the Hindi voice; an English voice would say it with an English accent.
+        boolean hindi = clean.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F) || "hi".equals(prefs.lang());
+        tts.setLanguage(hindi ? new Locale("hi", "IN") : new Locale("en", "IN"));
         tts.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "brain-reply");
     }
 

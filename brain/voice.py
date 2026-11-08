@@ -36,6 +36,7 @@ DEFAULTS = {
     "wake_word": "hey brain",
     "browser_voice": "",          # a voice name from the browser list, or "" for automatic
     "rate": 1.0,
+    "barge_in": True,             # in a conversation, stop talking when the owner starts
 }
 
 
@@ -185,41 +186,99 @@ def clean_for_speech(text: str) -> str:
 
 
 EDGE_VOICES = {
-    "en-IN-PrabhatNeural": "Prabhat: Indian English, male",
-    "en-IN-NeerjaNeural": "Neerja: Indian English, female",
-    "hi-IN-MadhurNeural": "Madhur: Hindi, male",
-    "hi-IN-SwaraNeural": "Swara: Hindi, female",
+    "en-IN-PrabhatNeural": "Prabhat: Indian English, male (says Hindi with Madhur)",
+    "en-IN-NeerjaNeural": "Neerja: Indian English, female (says Hindi with Swara)",
+    "en-IN-NeerjaExpressiveNeural": "Neerja Expressive: Indian English, female, warmer",
+    "hi-IN-MadhurNeural": "Madhur: Hindi and Hinglish, male",
+    "hi-IN-SwaraNeural": "Swara: Hindi and Hinglish, female",
     "en-US-AndrewMultilingualNeural": "Andrew: multilingual, male (very natural)",
+    "en-US-BrianMultilingualNeural": "Brian: multilingual, male, relaxed",
     "en-US-EmmaMultilingualNeural": "Emma: multilingual, female (very natural)",
+    "en-US-AvaMultilingualNeural": "Ava: multilingual, female, bright",
     "en-GB-RyanNeural": "Ryan: British English, male",
 }
+
+# English-only voices read Hindi with an English accent. For Hindi text they hand over to the Hindi
+# voice of the same gender, which also says English words with an Indian accent.
+HINDI_PARTNER = {
+    "en-IN-PrabhatNeural": "hi-IN-MadhurNeural",
+    "en-IN-NeerjaNeural": "hi-IN-SwaraNeural",
+    "en-IN-NeerjaExpressiveNeural": "hi-IN-SwaraNeural",
+    "en-GB-RyanNeural": "hi-IN-MadhurNeural",
+}
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+
+
+def has_hindi(text: str) -> bool:
+    """True when the text has Hindi written in Devanagari (the voice prompt asks for that)."""
+    return bool(_DEVANAGARI.search(text or ""))
+
+
+def edge_voice_for(text: str, chosen: str, language: str = "en") -> str:
+    """The voice for this sentence: the chosen one, or its Hindi partner for Hindi."""
+    chosen = chosen or DEFAULTS["edge_voice"]
+    if chosen in HINDI_PARTNER and (has_hindi(text) or language == "hi"):
+        return HINDI_PARTNER[chosen]
+    return chosen
+
+
+# One event loop for the natural voice, kept running: starting a new loop and connection setup for
+# every sentence added a noticeable pause before each one.
+_loop = {"loop": None}
+_loop_lock = threading.Lock()
+
+
+def _edge_loop():
+    import asyncio
+    with _loop_lock:
+        if _loop["loop"] is None or _loop["loop"].is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever, name="edge-voice", daemon=True).start()
+            _loop["loop"] = loop
+        return _loop["loop"]
 
 
 def _edge(text: str) -> bytes:
     if not has_module("edge_tts"):
         raise VoiceError("The natural voice isn't installed. Run start again, or choose another voice in Settings.")
+    import asyncio
     import edge_tts
     c = cfg()
     pct = round((float(c.get("rate") or 1.0) - 1.0) * 100)
-    voice_name = c.get("edge_voice") or DEFAULTS["edge_voice"]
+    voice_name = edge_voice_for(text, c.get("edge_voice"), c.get("language", "en"))
 
     async def collect() -> bytes:
-        comm = edge_tts.Communicate(text, voice_name, rate=f"{pct:+d}%", connect_timeout=6, receive_timeout=20)
+        comm = edge_tts.Communicate(text, voice_name, rate=f"{pct:+d}%", connect_timeout=5, receive_timeout=10)
         out = bytearray()
         async for chunk in comm.stream():
             if chunk.get("type") == "audio":
                 out.extend(chunk["data"])
         return bytes(out)
 
-    import asyncio
+    # A hard limit: the service can hang when it is unreachable.
+    fut = asyncio.run_coroutine_threadsafe(asyncio.wait_for(collect(), 8), _edge_loop())
     try:
-        # A hard limit: edge-tts's own sync helper can wait forever when the service is unreachable.
-        audio = asyncio.run(asyncio.wait_for(collect(), timeout=12))
+        audio = fut.result(timeout=9)      # backstop in case the loop itself is stuck
     except Exception as exc:
+        fut.cancel()
         raise VoiceError(f"Natural voice unavailable ({exc.__class__.__name__}). Check your internet.") from exc
     if not audio:
         raise VoiceError("Natural voice returned no audio.")
-    return bytes(audio)
+    return audio
+
+
+def warm() -> None:
+    """Open the natural voice's connection early (when a conversation starts), so the first reply has no
+    extra wait. Runs in the background; failures are ignored."""
+    if cfg()["tts"] not in ("edge", "freellmapi") or not has_module("edge_tts"):
+        return
+
+    def run():
+        try:
+            _edge("Hmm.")
+        except VoiceError:
+            pass
+    threading.Thread(target=run, name="voice-warm", daemon=True).start()
 
 
 def speak(text: str) -> tuple[bytes, str]:

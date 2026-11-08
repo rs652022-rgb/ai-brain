@@ -11,6 +11,7 @@ from . import config
 from .providers import PRESETS
 
 _lock = threading.Lock()
+edit_lock = threading.RLock()   # held around a whole load-change-save, so two saves can't undo each other
 
 ENV_KEYS = {pid: f"{pid.upper()}_API_KEY" for pid in PRESETS}
 
@@ -91,6 +92,8 @@ def save(data: dict) -> dict:
         backups = cfg.get("fallbacks")
         if isinstance(backups, list):
             clean["providers"][pid]["fallbacks"] = [str(m).strip() for m in backups if str(m).strip()][:10]
+        if cfg.get("auto_discovered") is True:
+            clean["providers"][pid]["auto_discovered"] = True
     # Master Control and Device control are saved through their own modules; other saves (the Settings
     # tab) must keep them as they are.
     try:
@@ -106,6 +109,33 @@ def save(data: dict) -> dict:
     with _lock:
         path().write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
+
+
+def merge_page_save(current: dict, incoming: dict) -> dict:
+    """Settings sent by the page, merged onto what is stored, so a save never quietly resets values.
+
+    The page can hold an old copy or a half-filled form. So: masked keys keep the stored key, voice
+    settings are merged (a missing voice field keeps its stored value), and values set elsewhere
+    (/think, the Agent card, the automatic model check) are kept.
+    """
+    out = dict(incoming)
+    for group in ("providers", "search"):
+        merged = {}
+        for pid, cfg in (incoming.get(group) or {}).items():
+            stored = current.get(group, {}).get(pid, {})
+            cfg = dict(cfg)
+            if str(cfg.get("api_key", "")).startswith("••••"):   # unchanged masked key
+                cfg["api_key"] = stored.get("api_key", "")
+            if group == "providers" and stored.get("auto_discovered"):
+                cfg.setdefault("auto_discovered", True)
+            merged[pid] = cfg
+        out[group] = merged
+    out["voice"] = (current.get("voice") or {}) | {k: v for k, v in (incoming.get("voice") or {}).items()
+                                                   if v is not None}
+    for k in ("thinking", "tools_off"):
+        if out.get(k) is None:
+            out[k] = current.get(k)
+    return out
 
 
 def resolved(pid: str, data: dict | None = None) -> dict:

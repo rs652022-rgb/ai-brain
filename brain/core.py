@@ -323,6 +323,11 @@ This is a live spoken conversation: your reply will be read aloud.
 - Write the way people talk: contractions, simple words, a natural touch like "acha", "hmm" or "right" now and then.
 - No markdown, bullet points, headings, emojis, links, citation marks like [K1] or (#12), or code.
 - Ask at most one question, and only when it keeps the conversation going.
+- When he speaks Hindi or Hinglish, answer the same way, and write every Hindi word in Devanagari
+  (for example "हाँ, मैं कर दूँगा, बस two minutes"), so the voice says it with a real Hindi accent.
+  Keep English words in English letters.
+- If he cut you off earlier (a reply that ends with "[interrupted]"), he only heard up to that point:
+  answer what he says now, and don't repeat what he didn't hear unless he asks.
 </voice_conversation>"""
 
 
@@ -413,6 +418,27 @@ def _save_message(conversation: str, role: str, content: str, mode: str) -> None
     with db.session() as conn:
         conn.execute("INSERT INTO messages (conversation, role, content, mode, created_at) VALUES (?,?,?,?,?)",
                      (conversation, role, content, mode, db.now()))
+
+
+INTERRUPTED = "[interrupted]"
+_heard: dict = {}        # (user, conversation) -> what the owner heard before talking over a spoken reply
+
+
+def voice_interrupted(conversation: str, heard: str) -> bool:
+    """The owner talked over a spoken reply. Keep only the part he heard, marked [interrupted], so the
+    next answer follows the real conversation. Returns True when a saved reply was shortened now; else the
+    text waits for the reply that is still being written."""
+    heard = (heard or "").strip()[:4000]
+    key = (config.user_key(), conversation)
+    _heard[key] = heard
+    with db.session() as conn:
+        row = conn.execute("SELECT id, role, content FROM messages WHERE conversation=? ORDER BY id DESC LIMIT 1",
+                           (conversation,)).fetchone()
+        if not row or row["role"] != "assistant" or row["content"].endswith(INTERRUPTED):
+            return False
+        conn.execute("UPDATE messages SET content=? WHERE id=?", (f"{heard} {INTERRUPTED}".strip(), row["id"]))
+    _heard.pop(key, None)
+    return True
 
 
 def extract_memories(text: str, source: str = "chat") -> int:
@@ -616,7 +642,7 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
     if summ:
         system += f"\n\n<earlier_in_this_conversation>\n{summ['text']}\n</earlier_in_this_conversation>"
     tool_ctx = {"web_asked": bool(want), "channel": channel, "tools_off": (persona or {}).get("tools_off", []),
-                "prefer": agents.prefer(persona)}
+                "prefer": agents.prefer(persona) or (llm.voice_model() if voice else None)}
     if tools_only is not None:                    # restricted runs (e.g. reading untrusted email)
         tool_ctx["tools_off"] = [n for n in tools.TOOLS if n not in tools_only]
     system += agents.prompt_block(persona)
@@ -727,7 +753,8 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
                  background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
                  channel: str = "", agent_id: str = "", attachments: list | None = None):
     """One turn, streamed: yields ('text', piece) as the reply is written, ('status', note) while tools run,
-    then ('final', result)."""
+    then ('final', result). If the page hangs up early (you talked over the voice), the reply is saved
+    as far as you heard it, marked [interrupted]."""
     ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
                    agent_id, attachments)
     if "done" in ctx:
@@ -737,8 +764,24 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
     if ctx["web_docs"]:
         yield "status", "Read the web, now answering…"
     from . import goals
+    import contextvars
     goals.aborted(ctx["conversation"])
-    shown, model = [], "none"
+    whose = contextvars.copy_context()            # the page may hang up while another thread holds us
+    key = (config.user_key(), ctx["conversation"])
+    _heard.pop(key, None)
+    shown = []
+    try:
+        yield from _stream_rounds(ctx, goals, shown)
+    except GeneratorExit:
+        heard = _heard.pop(key, None)
+        said = heard if heard is not None else "".join(shown).strip()
+        whose.run(_finish, ctx, f"{said} {INTERRUPTED}".strip(), ctx.get("model", "none"))
+        raise
+    yield "final", _finish(ctx, "".join(shown).strip(), ctx.get("model", "none"))
+
+
+def _stream_rounds(ctx: dict, goals, shown: list):
+    """The model writes; tools run between rounds. Text pieces are yielded and collected in shown."""
     for _ in range(tools.MAX_ROUNDS + 1):
         filt = tools.ToolFilter()
         for kind, value in llm.chat_stream(ctx["system"], ctx["history"], private=ctx["private"],
@@ -749,14 +792,14 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
                     shown.append(safe)
                     yield "text", safe
             else:
-                model = value
+                ctx["model"] = value
         tail = filt.flush()
         if tail:
             shown.append(tail)
             yield "text", tail
         call = tools.parse(filt.raw)
         if not call:
-            break
+            return
         yield "status", TOOL_STATUS.get(call[0], "Working on it…")
         _tool_round(ctx, filt.raw)
         if _apply_steering(ctx, goals):
@@ -764,11 +807,10 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
         if goals.aborted(ctx["conversation"]):
             shown.append("\n\n(Stopped, as you asked.)")
             yield "text", "\n\n(Stopped, as you asked.)"
-            break
+            return
         if shown and not "".join(shown).endswith(("\n", " ")):
             shown.append("\n\n")
             yield "text", "\n\n"
-    yield "final", _finish(ctx, "".join(shown).strip(), model)
 
 
 def deliver_to_chat(text: str, conversation: str = "main") -> None:

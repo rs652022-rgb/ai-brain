@@ -83,7 +83,8 @@ def save_config(changes: dict) -> dict:
                 continue
             if k in SECRETS[ch] and not str(v).strip():
                 continue                      # blank secret = keep the saved one
-            cur[ch][k] = bool(v) if k == "enabled" else str(v).strip()[:300]
+            limit = 1200 if k.endswith("_url") else 300       # Teams/Power Automate webhook URLs are long
+            cur[ch][k] = bool(v) if k == "enabled" else str(v).strip()[:limit]
     data["channels"] = cur | {"_inbox": (data.get("channels") or {}).get("_inbox", "")}
     settings.save(data)
     db.audit("owner", "channels.update", enabled=[c for c in CHANNELS if cur[c]["enabled"]])
@@ -602,3 +603,4 @@ def status() -> dict:
 
 from . import channels_more  # noqa: E402,F401  (registers WhatsApp, Signal, Matrix, Mattermost, IRC, Twitch, SMS, LINE)
 from . import channels_extra  # noqa: E402,F401  (WeChat, WeCom, Feishu, DingTalk, QQ, Zalo, Nextcloud, Synology, Rocket.Chat, Zulip, Viber, Messenger, Instagram, Webex, Nostr)
+from . import channels_work  # noqa: E402,F401  (Microsoft Teams, Google Chat)

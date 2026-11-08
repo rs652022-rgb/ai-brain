@@ -34,8 +34,8 @@ def _start_scheduler():
         data = settings.load()
         for pid in data.get("order", []):
             p = settings.resolved(pid, data)
-            if pid not in llm.PAID_PROVIDERS and p["kind"] != "ollama" and p["api_key"] and not p["fallbacks"]:
-                r = llm.discover(pid)
+            if pid not in llm.PAID_PROVIDERS and p["kind"] != "ollama" and p["api_key"] and not p["fallbacks"]                     and not data.get("providers", {}).get(pid, {}).get("auto_discovered"):
+                r = llm.discover(pid, keep_user_model=True)
                 db.audit("system", "models.discover", provider=pid, ok=r.get("ok"), model=r.get("model"))
 
     def for_each_brain(fn, what):
@@ -252,16 +252,10 @@ class SettingsIn(BaseModel):
 @app.put("/api/settings")
 def settings_put(body: SettingsIn, request: Request):
     _need_master(request)   # once a Master PIN is set, API keys and settings need it too
-    current = settings.load()
-    data = body.model_dump()
-    for group in ("providers", "search"):
-        for pid, cfg in (data.get(group) or {}).items():
-            key = cfg.get("api_key", "")
-            if key.startswith("••••"):  # unchanged masked key: keep the stored one
-                cfg["api_key"] = current.get(group, {}).get(pid, {}).get("api_key", "")
-    for k in ("thinking", "tools_off"):             # set elsewhere (/think, the Agent card): keep them
-        data.setdefault(k, current.get(k))
-    saved = settings.save(data)
+    with settings.edit_lock:                        # one save at a time: no lost updates
+        current = settings.load()
+        data = settings.merge_page_save(current, body.model_dump())
+        saved = settings.save(data)
     db.audit("owner", "settings.save", order=saved["order"], embeddings=saved["embeddings"],
              cloud_private_tasks=saved["cloud_private_tasks"])
     return {"settings": settings.masked(saved), "presets": PRESETS, "search_presets": web.SEARCH_PRESETS,
@@ -479,6 +473,12 @@ def voice_transcribe(body: AudioIn):
 
 class SpeakIn(BaseModel):
     text: str
+
+
+@app.post("/api/voice/warm")
+def voice_warm():
+    voice.warm()
+    return {"ok": True}
 
 
 @app.post("/api/voice/speak")
@@ -1117,6 +1117,15 @@ def chat_abort(body: SteerIn):
     return {"ok": True}
 
 
+@app.post("/api/chat/interrupted")
+def chat_interrupted(body: SteerIn):
+    """You talked over a spoken reply: stop it and keep only the part you heard (text)."""
+    from . import goals
+    conv = f"agent:{body.agent}" if body.agent else "main"
+    goals.abort_chat(conv)
+    return {"ok": True, "updated": core.voice_interrupted(conv, body.text)}
+
+
 @app.post("/api/control/task/{task_id}/steer")
 def control_task_steer(task_id: str, body: SteerIn):
     t = agent.get(task_id)
@@ -1303,6 +1312,12 @@ async def channel_inbound(channel: str, secret: str, request: Request):
                 cx.meta_inbound(channel, raw, headers)
             elif channel == "webex":
                 cx.webex_inbound(raw, headers)
+            elif channel in ("teams", "gchat"):     # these two want the answer in the reply
+                from . import channels_work as cw
+                body = json.loads(raw or b"{}")
+                if channel == "teams":
+                    return await asyncio.to_thread(cw.teams_inbound, raw, headers, body)
+                return await asyncio.to_thread(cw.gchat_inbound, headers, body)
             else:
                 break
         except PermissionError:

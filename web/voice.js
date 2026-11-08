@@ -63,7 +63,7 @@ function browserSay(text) {
 
 async function fetchVoice(text) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 8000);   // never keep you waiting on a slow voice service
+  const timer = setTimeout(() => ctl.abort(), 12000);  // never keep you waiting on a slow voice service
   try {
     const res = await fetch("/api/voice/speak", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }), signal: ctl.signal });
@@ -87,8 +87,10 @@ let voiceWarned = false;
 class Speaker {
   constructor() {
     this.buf = ""; this.queue = []; this.cancelled = false; this.ended = false;
-    // After a failure, use the browser voice for 2 minutes instead of waiting on the server again.
-    this.server = (V.cfg.tts === "edge" || V.cfg.tts === "piper" || V.cfg.tts === "freellmapi") && Date.now() - (V.serverVoiceDown || 0) > 120000;
+    this.heard = [];      // sentences you have heard (or started hearing), for when you interrupt
+    this.pushed = 0;
+    // After a failure, use the browser voice for 30 seconds, then try the natural voice again.
+    this.server = (V.cfg.tts === "edge" || V.cfg.tts === "piper" || V.cfg.tts === "freellmapi") && Date.now() - (V.serverVoiceDown || 0) > 30000;
     this.done = new Promise((r) => (this._resolve = r));
     this.running = false;
   }
@@ -101,11 +103,15 @@ class Speaker {
     while ((m = this.buf.match(re)) && (m[1].trim().length >= 3 || this.buf.length > 60)) {
       this.push(m[1]); this.buf = this.buf.slice(m[0].length);
     }
+    // Start talking sooner: the first bit can end at a comma once it's long enough to sound natural.
+    const c = !this.pushed && this.buf.match(/^([\s\S]{24,}?[,;:–])\s+/);
+    if (c) { this.push(c[1]); this.buf = this.buf.slice(c[0].length); }
   }
   end() { if (this.buf.trim()) this.push(this.buf); this.buf = ""; this.ended = true; this.kick(); }
   push(sentence) {
     const text = speechText(sentence);
     if (!text) return;
+    this.pushed++;
     // Start fetching the audio now, so it's ready when its turn comes.
     const item = { text, url: this.server ? fetchVoice(text).catch((e) => { this.fallback(e); return null; }) : null };
     this.queue.push(item);
@@ -124,6 +130,7 @@ class Speaker {
       const item = this.queue.shift();
       const url = item.url ? await item.url : null;
       if (this.cancelled) break;
+      this.heard.push(item.text);
       if (url) await playUrl(url); else await browserSay(item.text);
     }
     this.running = false;
@@ -180,19 +187,15 @@ function listenBrowser({ continuous = false, onPartial } = {}) {
 
 // Records until you pause (about 1.3 s of silence), then sends the audio to Whisper.
 async function listenServer() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
-    .catch(() => { throw new Error("Microphone access was blocked. Allow it in the browser's address bar."); });
+  const stream = await getMic();
   const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
   const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
   V.recorder = recorder;
   const chunks = [];
   recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
 
-  const ctx = new AudioContext();
-  const analyser = ctx.createAnalyser(); analyser.fftSize = 1024;
-  ctx.createMediaStreamSource(stream).connect(analyser);
-  const buf = new Float32Array(analyser.fftSize);
-  let heard = false, quietSince = performance.now();
+  const meter = micMeter(stream);
+  let heard = false, quietSince = performance.now(), speechMs = 0, last = performance.now(), floor = 0.01;
   const started = performance.now();
 
   await new Promise((resolve) => {
@@ -200,17 +203,20 @@ async function listenServer() {
     recorder.start(250);
     const tick = () => {
       if (recorder.state !== "recording") return;
-      analyser.getFloatTimeDomainData(buf);
-      const rms = Math.sqrt(buf.reduce((s, x) => s + x * x, 0) / buf.length);
-      const now = performance.now();
-      if (rms > 0.02) { heard = true; quietSince = now; }
+      const rms = meter.level(), now = performance.now();
+      if (!heard && now - started < 300) floor = Math.max(0.004, (floor + rms) / 2);   // the room's own level
+      if (rms > Math.max(0.015, floor * 2.5)) { heard = true; quietSince = now; speechMs += now - last; }
+      last = now;
+      // A short "yes" may be followed by more, so wait a little longer after very short speech.
+      const pause = speechMs < 900 ? 1100 : 750;
       const silentFor = now - quietSince, total = now - started;
-      if ((heard && silentFor > 900) || (!heard && total > 8000) || total > 60000 || V.stopFlag) recorder.stop();
+      if ((heard && silentFor > pause) || (!heard && total > 8000) || total > 60000 || V.stopFlag) recorder.stop();
       else requestAnimationFrame(tick);
     };
     tick();
   });
-  stream.getTracks().forEach((t) => t.stop()); ctx.close(); V.recorder = null;
+  meter.close(); V.recorder = null;
+  if (!V.talk) releaseMic();            // in a conversation the mic stays open for the next turn
   if (!heard || V.stopFlag) return "";
 
   showBar("Transcribing…");
@@ -225,7 +231,9 @@ async function listenOnce() {
   showBar("Listening… speak now, then pause");
   $("#mic").classList.add("rec");
   try {
-    return V.cfg.stt === "browser" ? await listenBrowser() : await listenServer();
+    if (V.cfg.stt !== "browser") return await listenServer();
+    if (!SR) return await listenBrowser();          // shows the "use Chrome or Edge" message
+    return await listenBrowserTurn(langCode(), (t) => { $("#chat-input").value = t; });
   } finally { $("#mic").classList.remove("rec"); }
 }
 
@@ -244,13 +252,32 @@ async function handleSpoken(text, { speakReply }) {
   showBar("Thinking…");
   const speaker = speakReply && V.cfg.tts !== "off" ? new Speaker() : null;
   if (speaker) V.speaker = speaker;
-  const r = await sendChat(null, { text, spoken: true, onText: speaker ? (t) => speaker.feed(t) : null });
-  if (speaker) {
-    if (r?.error && !speaker.queue.length && !speaker.running) speaker.feed(r.reply);
-    speaker.end();
-    await speaker.done;
+  const ctl = new AbortController();
+  // In a conversation you can talk over the Brain: it stops at once and listens.
+  let unwatch = null, interrupted = false;
+  if (speaker && V.talk && V.cfg.barge_in !== false) {
+    watchBargeIn(() => { interrupted = true; interrupt(speaker, ctl); }).then((stop) => {
+      if (interrupted || speaker.cancelled) stop(); else unwatch = stop;
+    });
   }
-  return r;
+  try {
+    const r = await sendChat(null, { text, spoken: true, signal: ctl.signal, onText: speaker ? (t) => speaker.feed(t) : null });
+    if (speaker && !interrupted) {
+      if (r?.error && !speaker.queue.length && !speaker.running) speaker.feed(r.reply);
+      speaker.end();
+      await speaker.done;
+    }
+    return interrupted ? { ...r, interrupted: true } : r;
+  } finally { unwatch?.(); }
+}
+
+// You talked over the Brain: stop the voice and the answer, and keep only what you heard in the chat.
+function interrupt(speaker, ctl) {
+  const heard = speaker.heard.join(" ");
+  speaker.cancel();
+  ctl.abort();
+  showBar("Listening…");
+  api("/api/chat/interrupted", { method: "POST", body: { text: heard, agent: $("#agent-pick")?.value || "" } }).catch(() => {});
 }
 
 const wantsSpeech = () => $("#speak-toggle").classList.contains("on") && V.cfg.tts !== "off";
@@ -289,7 +316,11 @@ function setTalk(on) {
   V.talk = on;
   $("#talk-toggle").classList.toggle("on", on);
   $("#band-talk")?.classList.toggle("on", on);
-  if (on) { setWake(false); talkLoop(); } else { stopListening(); stopSpeaking(); showBar(""); }
+  if (on) {
+    setWake(false);
+    if (V.cfg.tts !== "browser" && V.cfg.tts !== "off") api("/api/voice/warm", { method: "POST" }).catch(() => {});
+    talkLoop();
+  } else { stopListening(); stopSpeaking(); releaseMic(); showBar(""); }
 }
 
 // Wake word: browser recognition runs continuously and reacts only to the wake phrase.
@@ -347,9 +378,13 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") stopAll();
 function fillBrowserVoices() {
   const sel = $("#v-bvoice"), current = V.cfg.browser_voice || "";
   const voices = "speechSynthesis" in window ? speechSynthesis.getVoices() : [];
-  const nice = voices.filter((v) => /^(en|hi)/.test(v.lang)).sort((a, b) => (b.lang.endsWith("IN") - a.lang.endsWith("IN")) || a.name.localeCompare(b.name));
-  sel.replaceChildren(el("option", { value: "" }, "Automatic (Indian English if available)"),
-    ...nice.map((v) => el("option", { value: v.name }, `${v.name} (${v.lang})`)));
+  const natural = (v) => /Natural|Online|Neural|Google/i.test(v.name);
+  const nice = voices.filter((v) => /^(en|hi)/.test(v.lang)).sort((a, b) => (natural(b) - natural(a))
+    || (b.lang.endsWith("IN") - a.lang.endsWith("IN")) || a.name.localeCompare(b.name));
+  sel.replaceChildren(el("option", { value: "" }, "Automatic (most natural voice available)"),
+    ...nice.map((v) => el("option", { value: v.name }, `${v.name} (${v.lang})${natural(v) ? "" : " · robotic"}`)));
+  // The browser's voice list can arrive late: keep the saved choice so saving now doesn't clear it.
+  if (current && !nice.some((v) => v.name === current)) sel.append(el("option", { value: current }, current));
   sel.value = current;
 }
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = fillBrowserVoices;
@@ -358,6 +393,7 @@ function renderVoiceSettings() {
   const c = V.cfg;
   $("#v-stt").value = c.stt; $("#v-tts").value = c.tts; $("#v-lang").value = c.language;
   $("#v-rate").value = c.rate; $("#v-wmodel").value = c.whisper_model;
+  $("#v-barge").checked = c.barge_in !== false;
   $("#v-pvoice").value = c.piper_voice;
   const ev = V.caps.edge_voices || {};
   $("#v-evoice").replaceChildren(...Object.entries(ev).map(([id, label]) => el("option", { value: id }, label)));
@@ -373,13 +409,20 @@ function renderVoiceSettings() {
   $("#v-install-piper").hidden = !!V.caps.piper_installed;
   $("#v-download").hidden = !V.caps.piper_installed;
   note("#v-note", bits.join(" · "));
+  V.formReady = true;     // only now do the form fields hold the saved values
+}
+
+function pick(sel, saved) {          // a list with no options (not loaded yet) keeps the saved value
+  const box = $(sel);
+  return box && box.options && box.options.length && box.value ? box.value : saved;
 }
 
 function readVoiceSettings() {
+  if (!V.formReady) return { ...V.cfg };   // form not filled yet: never save blank or default values
   return { ...V.cfg, stt: $("#v-stt").value, tts: $("#v-tts").value, language: $("#v-lang").value,
     rate: Number($("#v-rate").value),
-    whisper_model: $("#v-wmodel").value, edge_voice: $("#v-evoice").value || "en-IN-PrabhatNeural", piper_voice: $("#v-pvoice").value.trim() || "en_US-lessac-medium",
-    browser_voice: $("#v-bvoice").value, speak_replies: V.cfg.speak_replies !== false };
+    whisper_model: $("#v-wmodel").value, edge_voice: pick("#v-evoice", V.cfg.edge_voice), piper_voice: $("#v-pvoice").value.trim() || "en_US-lessac-medium",
+    browser_voice: $("#v-bvoice").value, barge_in: $("#v-barge").checked, speak_replies: V.cfg.speak_replies !== false };
 }
 
 const _origSave = saveSettings;

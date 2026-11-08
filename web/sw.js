@@ -1,8 +1,8 @@
 // Makes the Brain installable and opens it even without internet (your data stays on the server).
 // Pages and app files: network first (so updates show at once), cached copy when offline.
 // API calls are never cached.
-const CACHE = "brain-shell-v4";
-const SHELL = ["/", "/static/style.css", "/static/app.js", "/static/control.js", "/static/voice.js", "/static/account.js", "/static/agentui.js", "/static/extras.js", "/static/more.js",
+const CACHE = "brain-shell-v5";
+const SHELL = ["/", "/static/style.css", "/static/app.js", "/static/control.js", "/static/voice-duplex.js", "/static/voice.js", "/static/account.js", "/static/agentui.js", "/static/extras.js", "/static/more.js",
   "/manifest.webmanifest", "/static/icons/icon-192.png", "/static/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

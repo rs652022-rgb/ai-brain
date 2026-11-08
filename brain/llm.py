@@ -731,10 +731,12 @@ def _try_model(p: dict, model: str) -> tuple[str, bool, str, float]:
         return model, False, f"{exc.__class__.__name__}: {exc}", time.time() - start
 
 
-def discover(pid: str, max_tests: int = 8, keep: int = 4) -> dict:
+def discover(pid: str, max_tests: int = 8, keep: int = 4, keep_user_model: bool = False) -> dict:
     """Find the free chat models this key can use, test them, and save the working ones in order.
 
     The fastest good model becomes the main model and the rest become automatic backups.
+    keep_user_model (the automatic background check): a model the user chose stays the main model,
+    and only the backups are filled in. The provider is marked so the check runs once, not every 10 minutes.
     """
     data = settings.load()
     p = settings.resolved(pid, data)
@@ -768,10 +770,13 @@ def discover(pid: str, max_tests: int = 8, keep: int = 4) -> dict:
     working.sort(key=lambda w: (w[1] > 10, order[w[0]]))
     chosen = [m for m, _ in working[:keep]]
 
-    data = settings.load()  # reload in case settings changed while testing
-    cfg = data.setdefault("providers", {}).setdefault(pid, {})
-    cfg["model"], cfg["fallbacks"] = chosen[0], chosen[1:]
-    settings.save(data)
+    with settings.edit_lock:
+        data = settings.load()  # reload in case settings changed while testing
+        old = data.get("providers", {}).get(pid, {})
+        if keep_user_model and old.get("model"):
+            chosen = [old["model"]] + [m for m in chosen if m != old["model"]][:keep - 1]
+        cfg = old | {"model": chosen[0], "fallbacks": chosen[1:], "auto_discovered": True}
+        settings.save(data | {"providers": data.get("providers", {}) | {pid: cfg}})
     return {"provider": pid, "ok": True, "model": chosen[0], "fallbacks": chosen[1:],
             "tested": candidates, "failed": failed, "listed": len(all_models)}
 

@@ -51,12 +51,20 @@ Object.assign(MORE_CHANNELS, {
   webex: { label: "Webex", hook: true, register: true,
     steps: ["At developer.webex.com → My Webex Apps → create a Bot and copy its token.", "Pick a webhook secret (any long word), save, then press 'Connect webhook'."],
     fields: { bot_token: "Bot token", secret: "Webhook secret" } },
+  teams: { label: "Microsoft Teams", hook: true,
+    steps: ["In a team: ⋯ → Manage team → Apps → Create an outgoing webhook. Set its callback URL to the webhook URL below and copy the security token it shows here.",
+            "Optional, for answers that take longer than 5 seconds: add an incoming webhook (Workflows → 'Post to a channel when a webhook request is received') and paste its URL. People talk to it with @Brain in the channel."],
+    fields: { security_token: "Security token", incoming_url: "Incoming webhook URL (optional)" } },
+  gchat: { label: "Google Chat", hook: true,
+    steps: ["In Google Cloud, enable the Google Chat API and configure the app: HTTP endpoint URL = the webhook URL below; Authentication audience = HTTP endpoint URL.",
+            "Enter the same webhook URL here as the audience. Optional: a space's incoming webhook URL, for answers that take longer than 25 seconds."],
+    fields: { audience: "Audience (the webhook URL below)", incoming_url: "Space webhook URL (optional)" } },
   nostr: { label: "Nostr (encrypted DMs)",
     steps: ["Give your Brain its own Nostr private key (nsec… or hex); never reuse your personal one.", "It listens on the relays for encrypted DMs (NIP-04) and answers only people you approve."],
     fields: { private_key: "Brain's private key (nsec…)", relays: "Relays (wss://relay.damus.io, wss://nos.lol)" } },
 });
 ["app_secret", "secret", "aes_key", "encrypt_key", "verification_token", "oa_secret", "auth_token", "api_key", "page_token",
- "bot_token", "private_key", "incoming_url"].forEach((k) => SECRET_FIELDS.add(k));
+ "bot_token", "private_key", "incoming_url", "security_token"].forEach((k) => SECRET_FIELDS.add(k));
 
 const _buildMore = buildMoreChannels;
 buildMoreChannels = function () {

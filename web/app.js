@@ -338,7 +338,7 @@ async function sendChat(e, opts = {}) {
   input.placeholder = "Still working… type to steer it (e.g. only free options), or press Stop";
   let reply = "", result = null;
   try {
-    const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" },
+    const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, signal: opts.signal,
       body: JSON.stringify({ message: text, mode, use_sealed: $("#use-sealed").checked, web: webOn, voice: !!opts.spoken,
                              agent: $("#agent-pick").value, attachments: takeAttachments() }) });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
@@ -380,6 +380,10 @@ async function sendChat(e, opts = {}) {
     return result;
   } catch (err) {
     bubble.classList.remove("thinking");
+    if (err.name === "AbortError") {           // you talked over the voice: keep what was written so far
+      bubble.textContent = reply ? `${reply} …` : "…";
+      return { reply, interrupted: true };
+    }
     const [main, details] = String(err.message).split("\n\nDetails: ");
     bubble.textContent = reply ? `${reply}\n\n${main}` : main;
     bubble.classList.add("error");
@@ -690,7 +694,8 @@ async function saveSettings(quiet = false) {
   S.web_mode = $("#web-mode").value;
   S.suggest_facts = $("#suggest-facts").checked;
   const r = await api("/api/settings", { method: "PUT", body: S });
-  if (!quiet) { S = r.settings; renderSettings(); note("#settings-note", "Saved."); loadStatus(); }
+  S = r.settings;          // always keep the page's copy fresh, so a later save can't undo other changes
+  if (!quiet) { renderSettings(); note("#settings-note", "Saved."); loadStatus(); }
 }
 $("#settings-save").addEventListener("click", () => saveSettings().catch((e) => note("#settings-note", e.message, true)));
 $("#prov-add-btn").addEventListener("click", () => { const p = $("#prov-add").value; if (p) { S.order.push(p); renderSettings(); } });
