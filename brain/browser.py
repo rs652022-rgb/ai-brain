@@ -62,9 +62,9 @@ def _elements(page) -> str:
 
 def browse(url: str, actions: list | None = None, screenshot: bool = False) -> dict:
     """Open url, run the actions in order, and return what the page shows."""
+    web.check_url(url)              # refuse private and local addresses first, installed or not
     if not installed():
         raise BrowserError("The browser tool isn't installed. Settings → Install the browser tool.")
-    web.check_url(url)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         b = pw.chromium.launch(headless=True)

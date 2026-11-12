@@ -127,7 +127,7 @@ def run(code: str) -> str:
         raise SandboxError("Running code needs Docker (or, on your own computer, the sandbox_local setting).")
     try:
         if m == "docker":
-            r = subprocess.run(["docker", "run", "--rm", "-i", "--network", "none", "--memory", "256m", "--cpus", "1",
+            r = subprocess.run(["docker", "run", "--rm", "-i", "--quiet", "--network", "none", "--memory", "256m", "--cpus", "1",
                                 "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp", "python:3.12-slim", "python", "-"],
                                input=code, capture_output=True, text=True, timeout=TIMEOUT + 30)
         else:
