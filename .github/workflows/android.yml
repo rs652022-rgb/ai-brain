@@ -40,7 +40,7 @@ jobs:
         run: |
           gradle -p android assembleDebug --no-daemon -q -PbrainUrl="$SERVER_URL"
           cp android/app/build/outputs/apk/debug/app-debug.apk Brain.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Brain-android
           path: Brain.apk
