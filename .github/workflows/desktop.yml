@@ -51,7 +51,7 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: mkdir -p out && tar -czf out/AIBrain-Linux.tar.gz -C dist AIBrain
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AIBrain-${{ runner.os }}
           path: out/*
