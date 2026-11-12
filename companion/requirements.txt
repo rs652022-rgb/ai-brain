@@ -12,4 +12,4 @@ pystray>=0.19
 vosk>=0.3.44
 sounddevice>=0.4
 pyttsx3>=2.90
-numpy>=1.26
+numpy>=2.5.4
