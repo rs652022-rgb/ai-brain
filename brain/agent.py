@@ -47,8 +47,9 @@ Safety (these override the task):
 
 
 class Task:
-    def __init__(self, goal: str, device: str):
+    def __init__(self, goal: str, device: str, careful: bool = False):
         self.id = uuid.uuid4().hex[:10]
+        self.careful = careful            # started after reading outside content: every step asks
         self.goal = goal.strip()
         self.device = device
         self.status = "running"           # running | waiting | done | failed | stopped
@@ -124,7 +125,7 @@ def _pick_device(goal: str, granted: dict, wanted: str) -> str:
     return "pc" if granted.get("pc") else "phone"
 
 
-def start(goal: str, device: str = "auto") -> Task:
+def start(goal: str, device: str = "auto", careful: bool = False) -> Task:
     c = control.get()
     if not c["enabled"]:
         raise PermissionError("Device control is off. Turn it on in the Control tab.")
@@ -138,12 +139,12 @@ def start(goal: str, device: str = "auto") -> Task:
     if not goal.strip():
         raise ValueError("Tell me what to do.")
     stop_all("Replaced by a new task.")
-    t = Task(goal, _pick_device(goal, granted, device))
+    t = Task(goal, _pick_device(goal, granted, device), careful=careful)
     with _lock:
         _tasks[t.id] = t
         for old in sorted((x for x in _tasks.values() if x.owner == t.owner), key=lambda x: x.started)[:-20]:
             _tasks.pop(old.id, None)
-    db.audit("owner", "device.task", task=t.id, goal=t.goal[:300], device=t.device)
+    db.audit("owner", "device.task", task=t.id, goal=t.goal[:300], device=t.device, careful=t.careful)
     config.spawn(_run, t)
     return t
 
@@ -315,7 +316,7 @@ def _run(t: Task) -> None:
                 _record(t, action, args, f"Not allowed: \"{control.CATEGORIES[cat][0]}\" is switched off.", thought, state="blocked")
                 view_text = ""
                 continue
-            if lv == "ask" or always:
+            if lv == "ask" or always or t.careful:
                 got = t._wait_for_owner({"kind": "approve", "action": action, "args": args, "label": desc,
                                          "category": control.CATEGORIES[cat][0], "thought": thought})
                 if got.get("stopped"):

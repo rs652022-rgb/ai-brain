@@ -95,7 +95,7 @@ async function loadMcp() {
         el("button", { class: "mini danger", onclick: async () => { await api(`/api/mcp/${s.name}`, { method: "DELETE" }); loadMcp(); } }, "Remove")))))
     : [el("p", { class: "hint" }, "No MCP servers yet.")]));
   const state = [r.browser ? "Browser tool: installed." : "Browser tool: not installed.",
-                 r.sandbox === "docker" ? "Python sandbox: Docker (no internet)." : r.sandbox === "local" ? "Python sandbox: separate process on this computer." : "Python sandbox: off (needs Docker here)."];
+                 r.sandbox === "docker" ? "Python sandbox: Docker (no internet)." : r.sandbox === "local" ? "Python sandbox: limited process on this computer (no network isolation)." : "Python sandbox: off (install Docker, or switch on sandbox_local on your own computer)."];
   $("#pl-state").textContent = state.join(" ");
   $("#br-install").hidden = r.browser;
 }

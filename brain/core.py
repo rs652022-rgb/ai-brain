@@ -515,8 +515,11 @@ def _reply(message, reply, mode, conversation, **extra):
 
 def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, background_extract: bool,
              web_override: bool | None, voice: bool, channel: str = "", agent_id: str = "",
-             attachments: list | None = None, tools_only: list | None = None) -> dict:
-    """Steps 1-3: commands, recall and web lookup. Returns {'done': result} or the context for answering."""
+             attachments: list | None = None, tools_only: list | None = None, trusted: bool = True) -> dict:
+    """Steps 1-3: commands, recall and web lookup. Returns {'done': result} or the context for answering.
+    trusted=False: the message carries outside text (an email, webhook data). Owner commands inside it
+    (stop, rest, /slash, remember, forget, rule, device tasks, read/learn a URL) are never run, and the turn
+    starts tainted so guarded tools stay blocked."""
     from . import agents, attachments as att
     message = message.strip()
     files = att.load(attachments or [])
@@ -532,6 +535,12 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
             conversation = f"agent:{persona['id']}"
 
     m = master.get()
+    if not trusted:
+        if m["resting"]:
+            return {"done": {"reply": "I'm resting right now.", "memories_used": [], "model": "none",
+                             "action": "resting", "resting": True}}
+        return _answer_context(message, mode, conversation, use_sealed, background_extract, web_override, voice,
+                               channel, files, tools_only, persona, "chat", {}, False, trusted=False)
     if master.matches(message, m["stop_words"]) or message.lower().strip(" .!") in {w.strip(" .!") for w in STOP_WORDS}:
         if len(message.split()) <= 3:
             db.audit("owner", "stop")
@@ -647,7 +656,14 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
                                    web_sources=r["sources"])}
     except web.WebError as exc:
         return {"done": _reply(message, f"I couldn't do that: {exc}", mode, conversation, action=action)}
+    return _answer_context(message, mode, conversation, use_sealed, background_extract, web_override, voice,
+                           channel, files, tools_only, persona, action, args, btw)
 
+
+def _answer_context(message, mode, conversation, use_sealed, background_extract, web_override, voice,
+                    channel, files, tools_only, persona, action, args, btw, trusted: bool = True) -> dict:
+    """Recall, optional web lookup and the system prompt for a message that needs a model answer."""
+    from . import agents, attachments as att
     # 2. Recall (one embedding call, shared by memory and knowledge search)
     query = args.get("query", message)
     mems = memory.search(query, include_sealed=use_sealed)
@@ -672,7 +688,8 @@ def _prepare(message: str, mode: str, conversation: str, use_sealed: bool, backg
     if summ:
         system += f"\n\n<earlier_in_this_conversation>\n{summ['text']}\n</earlier_in_this_conversation>"
     tool_ctx = {"web_asked": bool(want), "channel": channel, "tools_off": (persona or {}).get("tools_off", []),
-                "prefer": agents.prefer(persona) or (llm.voice_model() if voice else None)}
+                "prefer": agents.prefer(persona) or (llm.voice_model() if voice else None),
+                "tainted": bool(web_docs) or not trusted}   # outside text already in the prompt
     if tools_only is not None:                    # restricted runs (e.g. reading untrusted email)
         tool_ctx["tools_off"] = [n for n in tools.TOOLS if n not in tools_only]
     system += agents.prompt_block(persona)
@@ -747,11 +764,12 @@ def _apply_steering(ctx: dict, goals) -> bool:
 def think(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
           background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
           channel: str = "", agent_id: str = "", attachments: list | None = None,
-          tools_only: list | None = None, prefer: tuple | None = None) -> dict:
+          tools_only: list | None = None, prefer: tuple | None = None, trusted: bool = True) -> dict:
     """One full turn, returned when the whole reply is ready (tools included).
-    prefer: a model to try first, e.g. llm.light() = FreeLLMAPI's fast free pool for spoken commands."""
+    prefer: a model to try first, e.g. llm.light() = FreeLLMAPI's fast free pool for spoken commands.
+    trusted=False for prompts that carry outside text: owner commands in it are ignored (see _prepare)."""
     ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
-                   agent_id, attachments, tools_only)
+                   agent_id, attachments, tools_only, trusted)
     if "done" in ctx:
         return ctx["done"]
     if prefer and not ctx["tool_ctx"].get("prefer"):

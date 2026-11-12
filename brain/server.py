@@ -247,6 +247,8 @@ class SettingsIn(BaseModel):
     search_order: list[str] = Field(default_factory=lambda: ["duckduckgo"])
     search: dict[str, dict] = Field(default_factory=dict)
     voice: dict = Field(default_factory=dict)
+    taint_guard: bool | None = None       # None = keep the stored value
+    sandbox_local: bool | None = None
 
 
 @app.put("/api/settings")
@@ -1486,17 +1488,12 @@ def automations_webhook(body: WebhookIn, request: Request):
     return job | {"url": f"{_site(request)}/api/hooks/{secret}"}
 
 
-_hook_hits: dict[str, list[float]] = {}
-
-
 @app.post("/api/hooks/{secret}")
 async def webhook_in(secret: str, request: Request):
     """Another app triggers a webhook automation. The secret in the address is the password."""
-    now = time.time()
-    hits = [t for t in _hook_hits.get(secret[:12], []) if now - t < 60]
-    if len(hits) >= 20:
+    from . import ratelimit
+    if not ratelimit.allow(f"hook:{secret[:12]}", 20, 60):
         raise HTTPException(status_code=429, detail="Too many calls")
-    _hook_hits[secret[:12]] = hits + [now]
     try:
         payload = await request.json()
     except Exception:

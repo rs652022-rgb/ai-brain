@@ -305,7 +305,7 @@ def run(job: dict, payload: dict | None = None) -> dict:
             job = job | {"deliver": "none"}          # the workflow delivers by itself
         else:
             out = core.think(prompt, mode="assistant", conversation=f"job:{job['id']}", background_extract=False,
-                             channel=job["deliver"])
+                             channel=job["deliver"], trusted=job["kind"] != "webhook")
             text, status = out["reply"], "ok"
     except Exception as exc:
         text, status = f"The job couldn't run: {str(exc)[:300]}", "failed"

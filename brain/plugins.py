@@ -104,9 +104,12 @@ def install_zip(data: bytes) -> str:
             if n.endswith("/") or (root and not n.startswith(root + "/")):
                 continue
             rel = n[len(root) + 1:] if root else n
-            if rel.startswith("/") or ".." in rel.split("/"):
+            parts = rel.replace("\\", "/").split("/")
+            if rel.startswith(("/", "\\")) or ".." in parts or ":" in rel:
                 raise ValueError("Unsafe file in the zip.")
             out = dest / rel
+            if not out.resolve().is_relative_to(dest.resolve()):
+                raise ValueError("Unsafe file in the zip.")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(z.read(n))
     db.audit("owner", "plugin.install", plugin=name)

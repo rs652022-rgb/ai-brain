@@ -101,7 +101,7 @@ def t_schedule(args: dict, ctx: dict) -> str:
 
 def t_use_device(args: dict, ctx: dict) -> str:
     from . import agent
-    t = agent.start(str(args.get("goal", "")), str(args.get("device", "auto")))
+    t = agent.start(str(args.get("goal", "")), str(args.get("device", "auto")), careful=bool(ctx.get("tainted")))
     ctx["task"] = t.public(with_screen=False)
     return "Started. The owner can watch each step and approve risky ones. Tell him it has started."
 
@@ -444,9 +444,33 @@ def parse(text: str) -> tuple[str, dict, str] | None:
     return name, args, text[:m.start()].strip()
 
 
+# Tools whose results bring outside text (web pages, other servers) into the turn.
+UNTRUSTED_TOOLS = frozenset({"web_search", "read_page", "browse", "my_browser", "mcp", "delegate"})
+# Tools (or ops) with lasting side effects that a tainted turn may not use on its own.
+# None = every op of the tool.
+GUARDED = {"schedule": None, "mcp": None, "code": frozenset({"write", "patch", "branch"})}
+
+
+def taint_guard_on() -> bool:
+    return bool(settings.load().get("taint_guard", True))
+
+
+def blocked_by_taint(name: str, args: dict, ctx: dict) -> bool:
+    """True when this call must not run because the turn already read untrusted content."""
+    if not ctx.get("tainted") or name not in GUARDED or not taint_guard_on():
+        return False
+    ops = GUARDED[name]
+    return ops is None or str(args.get("op", "")) in ops
+
+
 def run(name: str, args: dict, ctx: dict) -> str:
     if name not in available(ctx):
         return f"Tool {name} isn't available. Answer without it."
+    if blocked_by_taint(name, args, ctx):
+        db.audit("brain", "tool.blocked_tainted", tool=name)
+        return (f"Tool {name} was blocked for safety: this turn read outside content (web pages, emails or "
+                "messages), which may contain hidden instructions. Tell the owner what you wanted to do so they "
+                "can ask for it directly in a new message.")
     try:
         out = TOOLS[name][2](args, ctx)
     except (ToolError, PermissionError, ValueError) as exc:
@@ -454,6 +478,8 @@ def run(name: str, args: dict, ctx: dict) -> str:
     except Exception as exc:          # web errors, provider errors, network
         return f"Tool {name} failed: {str(exc)[:300]}"
     ctx.setdefault("tools_used", []).append(name)
+    if name in UNTRUSTED_TOOLS:
+        ctx["tainted"] = True
     return out[:8000]
 
 

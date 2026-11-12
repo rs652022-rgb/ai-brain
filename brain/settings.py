@@ -42,6 +42,8 @@ def _default() -> dict:
         "voice": {},                    # see voice.DEFAULTS
         "thinking": "fast",             # fast | low | high  (/think)
         "tools_off": [],                # agent tools switched off by the owner
+        "taint_guard": True,            # after reading outside content, block lasting actions and ask for device steps
+        "sandbox_local": False,         # without Docker, run Python in a limited local process (no network isolation)
     }
 
 
@@ -76,6 +78,8 @@ def save(data: dict) -> dict:
         "voice": {},
         "thinking": data.get("thinking") if data.get("thinking") in ("fast", "low", "high") else "fast",
         "tools_off": [str(t) for t in (data.get("tools_off") or []) if isinstance(t, str)][:20],
+        "taint_guard": bool(data.get("taint_guard", True)),
+        "sandbox_local": bool(data.get("sandbox_local", False)),
     }
     from .voice import DEFAULTS as VOICE_DEFAULTS
     for k, v in (data.get("voice") or {}).items():
@@ -132,7 +136,7 @@ def merge_page_save(current: dict, incoming: dict) -> dict:
         out[group] = merged
     out["voice"] = (current.get("voice") or {}) | {k: v for k, v in (incoming.get("voice") or {}).items()
                                                    if v is not None}
-    for k in ("thinking", "tools_off"):
+    for k in ("thinking", "tools_off", "taint_guard", "sandbox_local"):
         if out.get(k) is None:
             out[k] = current.get(k)
     return out

@@ -15,9 +15,9 @@ from . import config, settings
 
 CATEGORIES = {
     #  key           label                              what it covers                                        default
-    "observe":     ("See the screen",                 "Screenshots, open windows, the clipboard",              "auto"),
-    "apps":        ("Open apps and websites",         "Start apps, open links, switch and close windows",      "auto"),
-    "input":       ("Mouse and keyboard / touch",     "Click, type, press keys, scroll; tap and swipe on the phone", "auto"),
+    "observe":     ("See the screen",                 "Screenshots, open windows, the clipboard",              "ask"),
+    "apps":        ("Open apps and websites",         "Start apps, open links, switch and close windows",      "ask"),
+    "input":       ("Mouse and keyboard / touch",     "Click, type, press keys, scroll; tap and swipe on the phone", "ask"),
     "files_read":  ("Read files",                     "List and read files in the folders below",              "auto"),
     "files_write": ("Change files",                   "Create, edit and delete files in the folders below",    "ask"),
     "commands":    ("Run commands",                   "PowerShell / terminal commands",                        "ask"),

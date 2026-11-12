@@ -28,8 +28,7 @@ SESSION_DAYS = 30
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 _lock = threading.Lock()
 _ready: set[str] = set()
-_fails: dict[str, list[float]] = {}         # "email:..." or "ip:..." -> recent failure times
-_signups: dict[str, list[float]] = {}       # ip -> recent sign-up times
+# Failed logins and sign-ups are counted in data/security.db (brain/ratelimit.py), so restarts don't reset them.
 
 
 class AuthError(Exception):
@@ -140,17 +139,13 @@ def _check_password(pw: str) -> None:
 
 
 def _too_many(key: str, limit: int = 5, window: float = 300) -> bool:
-    now = time.time()
-    with _lock:
-        recent = [t for t in _fails.get(key, []) if now - t < window]
-        _fails[key] = recent
-        return len(recent) >= limit
+    from . import ratelimit
+    return ratelimit.count(f"login:{key}", window) >= limit
 
 
 def _failed(*keys: str) -> None:
-    with _lock:
-        for k in keys:
-            _fails.setdefault(k, []).append(time.time())
+    from . import ratelimit
+    ratelimit.hit(*(f"login:{k}" for k in keys))
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -188,12 +183,9 @@ def signup(email: str, password: str, name: str, ip: str = "") -> dict:
     _check_password(password)
     if not signup_open():
         raise AuthError("Sign-ups are closed. Ask the admin to invite you.", 403)
-    now = time.time()
-    with _lock:
-        recent = [t for t in _signups.get(ip, []) if now - t < 3600]
-        if ip and len(recent) >= 5:
-            raise AuthError("Too many sign-ups from here. Try again later.", 429)
-        _signups[ip] = recent + [now]
+    from . import ratelimit
+    if ip and not ratelimit.allow(f"signup:{ip}", 5, 3600):
+        raise AuthError("Too many sign-ups from here. Try again later.", 429)
     salt = secrets.token_hex(16)
     with _lock, _conn() as c:
         first = c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0

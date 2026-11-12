@@ -78,7 +78,7 @@ def test_off_by_default_and_chat_still_works(b):
 
 
 def test_chat_command_runs_task_with_screenshot_and_logs(b):
-    enable(b)
+    enable(b, observe="auto", apps="auto", input="auto")   # defaults are "ask" now
     b.script += [{"thought": "open it", "action": "open_app", "args": {"name": "notepad"}},
                  {"action": "type", "args": {"text": "hello"}},
                  {"action": "done", "args": {"summary": "Typed hello in Notepad."}}]

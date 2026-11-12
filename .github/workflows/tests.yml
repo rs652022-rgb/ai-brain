@@ -1,0 +1,32 @@
+# Runs the Brain's tests and a lint check on every push and pull request.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install (pinned versions, no desktop-control packages)
+        run: |
+          python -m pip install --upgrade pip
+          grep -viE "pyautogui|pyperclip|pygetwindow" requirements.txt > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt -c requirements.lock pytest pytest-cov ruff
+      - name: Lint (syntax errors and undefined names)
+        run: ruff check --select E9,F63,F7,F82 brain tests
+      - name: Test
+        env:
+          BRAIN_NO_SCHEDULER: "1"
+        run: python -m pytest -q --cov=brain --cov-report=term

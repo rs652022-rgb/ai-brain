@@ -11,6 +11,7 @@ you first, every time.
 import asyncio
 import base64
 import json
+import os
 import threading
 import uuid
 
@@ -34,11 +35,11 @@ def _keys() -> dict:
     pub = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
     _vapid.update(private_pem=priv, public=base64.urlsafe_b64encode(pub).rstrip(b"=").decode())
     config.ROOT_DATA.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_vapid))
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # private from the first byte
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(_vapid))
+    os.replace(tmp, path)
     return _vapid
 
 

@@ -7,10 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 WORKDIR /app
 # git: coding workspaces
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt .
+COPY requirements.txt requirements.lock ./
 # The server never moves a mouse itself (each user's companion app does), so skip the desktop packages.
+# requirements.lock pins every version (regenerate: uv pip compile requirements.txt --universal -o requirements.lock).
 RUN grep -viE "pyautogui|pyperclip|pygetwindow" requirements.txt > /tmp/requirements.txt \
- && pip install --no-cache-dir -r /tmp/requirements.txt
+ && pip install --no-cache-dir -r /tmp/requirements.txt -c requirements.lock
 
 COPY brain ./brain
 COPY web ./web

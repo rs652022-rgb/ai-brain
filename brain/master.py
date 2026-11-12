@@ -177,11 +177,11 @@ def strip_command(text: str, words: list[str]) -> str:
 
 _sessions: dict[str, tuple[str, float]] = {}   # token -> (whose Brain, expiry)
 SESSION_SECONDS = 12 * 3600
-_failures_by: dict[str, dict] = {}
+PIN_TRIES, PIN_LOCK_SECONDS, PIN_WINDOW = 5, 60, 900
 
 
-def _failures() -> dict:
-    return _failures_by.setdefault(config.user_key(), {"count": 0, "until": 0.0})
+def _pin_key() -> str:
+    return f"pin:{config.user_key()}"
 
 
 def _hash(pin: str, salt: str) -> str:
@@ -222,17 +222,18 @@ def check_pin(pin: str) -> bool:
     m = get()
     if not m["pin_hash"]:
         return True
-    now = time.time()
-    f = _failures()
-    if f["until"] > now:
-        raise PermissionError(f"Too many wrong tries. Wait {int(f['until'] - now) + 1} seconds.")
+    from . import ratelimit
+    key = _pin_key()
+    left = ratelimit.locked_for(key)
+    if left:
+        raise PermissionError(f"Too many wrong tries. Wait {int(left) + 1} seconds.")
     ok = hmac.compare_digest(_hash(pin or "", m["pin_salt"]), m["pin_hash"])
     if ok:
-        f.update(count=0, until=0.0)
+        ratelimit.clear(key)
     else:
-        f["count"] += 1
-        if f["count"] >= 5:
-            f.update(count=0, until=now + 60)
+        ratelimit.hit(key)
+        if ratelimit.count(key, PIN_WINDOW) >= PIN_TRIES:
+            ratelimit.lock(key, PIN_LOCK_SECONDS)
         time.sleep(0.6)  # slow down guessing
     return ok
 
