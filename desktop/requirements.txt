@@ -4,4 +4,4 @@ pywebview>=5.0
 # Activation word (offline)
 vosk>=0.3.44
 sounddevice>=0.4
-pyttsx3>=2.90
+pyttsx3>=2.99
