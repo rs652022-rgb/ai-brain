@@ -65,6 +65,45 @@ PRESETS = {
         "key_url": "https://github.com/settings/tokens",
         "note": "Free with a GitHub account. Use a personal access token with the 'models' permission.",
     },
+    "nvidia": {
+        "label": "NVIDIA NIM",
+        "kind": "openai",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "model": "openai/gpt-oss-120b",
+        "free": True,
+        "key_url": "https://build.nvidia.com/settings/api-keys",
+        "note": "Free for developers, about 40 requests a minute. Strong open models (DeepSeek, Qwen, Kimi, "
+                "gpt-oss). Use 'Load models' to see the full list.",
+    },
+    "sambanova": {
+        "label": "SambaNova Cloud",
+        "kind": "openai",
+        "base_url": "https://api.sambanova.ai/v1",
+        "model": "gpt-oss-120b",
+        "free": True,
+        "key_url": "https://cloud.sambanova.ai/apis",
+        "note": "Very fast. Free starter credits with rate limits; check your balance on their site, as the "
+                "free offer has changed over time.",
+    },
+    "cloudflare": {
+        "label": "Cloudflare Workers AI",
+        "kind": "openai",
+        "base_url": "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+        "model": "@cf/openai/gpt-oss-120b",
+        "free": True,
+        "key_url": "https://dash.cloudflare.com/profile/api-tokens",
+        "note": "10,000 free 'neurons' a day on every account. Put your Account ID in the address in place of "
+                "YOUR_ACCOUNT_ID, and make an API token with the 'Workers AI' permission.",
+    },
+    "huggingface": {
+        "label": "Hugging Face",
+        "kind": "openai",
+        "base_url": "https://router.huggingface.co/v1",
+        "model": "openai/gpt-oss-120b",
+        "free": True,
+        "key_url": "https://huggingface.co/settings/tokens",
+        "note": "One token for many hosted models. The free monthly credit is small, so it works best as a backup.",
+    },
     "freellmapi": {
         "label": "FreeLLMAPI (one key, many free providers)",
         "kind": "openai",

@@ -301,7 +301,8 @@ function replyExtras(r) {
   }
   const recalled = [...(r.memories_used || []).map((m) => `#${m.id} ${m.content.slice(0, 140)}`),
                     ...(r.knowledge_used || []).map((k) => `Learned: ${k.title}`)];
-  const label = [r.model, replyTime(r.timing)].filter(Boolean).join(" · ");
+  const check = r.checked ? (r.checked.problems ? "fixed after a self-check" : "self-checked") : "";
+  const label = [r.model, replyTime(r.timing), check].filter(Boolean).join(" · ");
   if (recalled.length) {
     extra.append(el("details", {}, el("summary", {}, `${recalled.length} memories/knowledge recalled · ${label}`),
       ...recalled.map((t) => el("div", {}, t))));
@@ -348,7 +349,8 @@ async function sendChat(e, opts = {}) {
   try {
     const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, signal: opts.signal,
       body: JSON.stringify({ message: text, mode, use_sealed: $("#use-sealed").checked, web: webOn, voice: !!opts.spoken,
-                             agent: $("#agent-pick").value, attachments: takeAttachments() }) });
+                             agent: $("#agent-pick").value, attachments: takeAttachments(),
+                             deep: deepOn && !opts.spoken ? true : null }) });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -409,6 +411,17 @@ async function sendChat(e, opts = {}) {
 let webNext = false;
 function setWebNext(on) { webNext = on; $("#web-toggle").classList.toggle("on", on); }
 $("#web-toggle").addEventListener("click", () => setWebNext(!webNext));
+// Deep stays on until you switch it off (remembered in this browser only).
+let deepOn = false;
+try { deepOn = localStorage.getItem("brain.deep") === "1"; } catch { /* storage blocked: start off */ }
+function setDeep(on) {
+  deepOn = on;
+  const b = $("#deep-toggle");
+  b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
+  try { localStorage.setItem("brain.deep", on ? "1" : "0"); } catch { /* not remembered, still works */ }
+}
+setDeep(deepOn);
+$("#deep-toggle").addEventListener("click", () => setDeep(!deepOn));
 $("#chat-form").addEventListener("submit", sendChat);
 $("#chat-stop").addEventListener("click", stopChat);
 $("#chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) sendChat(e); });

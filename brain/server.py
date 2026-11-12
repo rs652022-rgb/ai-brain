@@ -249,6 +249,10 @@ class SettingsIn(BaseModel):
     voice: dict = Field(default_factory=dict)
     taint_guard: bool | None = None       # None = keep the stored value
     sandbox_local: bool | None = None
+    speed_mode: str | None = None         # balanced | fastest
+    self_check: bool | None = None
+    deep_mode: bool | None = None
+    hedge_ms: int | None = Field(default=None, ge=0, le=10000)
 
 
 @app.put("/api/settings")
@@ -687,13 +691,14 @@ class ChatIn(BaseModel):
     voice: bool = False       # spoken turn: short, natural, speakable replies
     agent: str = ""           # which agent answers (empty = the main Brain)
     attachments: list[str] = []   # ids from /api/chat/upload
+    deep: bool | None = None  # Deep: several models answer and one merges (None = Settings "deep_mode")
 
 
 @app.post("/api/chat")
 def chat(body: ChatIn):
     try:
         return core.think(body.message, mode=body.mode, use_sealed=body.use_sealed, web_override=body.web or None,
-                          voice=body.voice, agent_id=body.agent, attachments=body.attachments)
+                          voice=body.voice, agent_id=body.agent, attachments=body.attachments, deep=body.deep)
     except llm.ModelUnavailable as exc:
         _err(exc, 503)
     except ValueError as exc:
@@ -709,7 +714,8 @@ def chat_stream(body: ChatIn):
         try:
             for kind, value in core.think_stream(body.message, mode=body.mode, use_sealed=body.use_sealed,
                                                  web_override=body.web or None, voice=body.voice,
-                                                 agent_id=body.agent, attachments=body.attachments):
+                                                 agent_id=body.agent, attachments=body.attachments,
+                                                 deep=body.deep):
                 if kind == "final":
                     yield json.dumps({"type": "final", "result": value}, ensure_ascii=False, default=str) + "\n"
                 else:

@@ -18,7 +18,7 @@ import threading
 import time
 from datetime import datetime
 
-from . import agent, config, control, db, identity, knowledge, llm, master, memory, settings, tools, web
+from . import agent, config, control, db, identity, knowledge, llm, master, memory, refine, settings, tools, web
 
 log = logging.getLogger("brain.core")
 
@@ -486,12 +486,17 @@ def extract_memories(text: str, source: str = "chat") -> int:
     return n
 
 
-def _wants_web(message: str) -> tuple[bool, str]:
+def _wants_web(message: str, found: dict | None = None) -> tuple[bool, str]:
     mode = settings.load().get("web_mode", "ask")
     if mode == "off" or not master.feature("web"):
         return False, ""
     if WEB_ASK.search(message):
         return True, message
+    if mode == "auto" and found:                 # cheap signals first: no extra model call when they're clear
+        if found.get("fresh"):
+            return True, message
+        if found.get("level") == "trivial":
+            return False, ""
     if mode == "auto":
         try:
             reply, _ = llm.chat(ROUTER_SYSTEM + " Output only the JSON object.", [{"role": "user", "content": message}],
@@ -664,16 +669,28 @@ def _answer_context(message, mode, conversation, use_sealed, background_extract,
                     channel, files, tools_only, persona, action, args, btw, trusted: bool = True) -> dict:
     """Recall, optional web lookup and the system prompt for a message that needs a model answer."""
     from . import agents, attachments as att
-    # 2. Recall (one embedding call, shared by memory and knowledge search)
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+    found = refine.route(message, bool(files), voice)
     query = args.get("query", message)
-    mems = memory.search(query, include_sealed=use_sealed)
-    rules = memory.rules()
-    know = knowledge.search(query, include_sealed=use_sealed)
-    private = use_sealed and any(m["sensitivity"] == "sealed" for m in mems)
+    # 2-3. Deciding on the web (may ask a small model) runs while memories and knowledge are recalled
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="web-check") as pool:
+        web_check = None
+        if action != "web" and web_override is None:
+            web_check = pool.submit(contextvars.copy_context().run, _wants_web, message, found)
+        mems = memory.search(query, include_sealed=use_sealed)    # one embedding, shared with knowledge search
+        rules = memory.rules()
+        know = knowledge.search(query, include_sealed=use_sealed)
+        private = use_sealed and any(m["sensitivity"] == "sealed" for m in mems)
+        if action == "web":
+            want, wquery = True, query
+        elif web_check is None:
+            want, wquery = web_override, query
+        else:
+            want, wquery = web_check.result()
 
-    # 3. Live web lookup, only when the owner asked for it
+    # Live web lookup, only when asked for (never with sealed memories in the prompt)
     web_docs, web_note = [], ""
-    want, wquery = (True, query) if action == "web" else (_wants_web(message) if web_override is None else (web_override, query))
     if want and not private:
         try:
             web_docs = knowledge.web_answer_context(wquery)
@@ -682,6 +699,8 @@ def _answer_context(message, mode, conversation, use_sealed, background_extract,
             web_note = f"(Web search failed: {exc})"
 
     system = build_system_prompt(mode, mems, rules, know, web_docs, voice=voice)
+    if found["level"] == "hard" and not voice:
+        system += refine.HARD_PROMPT
     if web_note:
         system += f"\n\nNote: {web_note} Tell {master.owner_name()} the web search did not work."
     summ = _summary(conversation)
@@ -699,8 +718,8 @@ def _answer_context(message, mode, conversation, use_sealed, background_extract,
     return {"message": message, "mode": mode, "conversation": conversation, "mems": mems, "know": know,
             "web_docs": web_docs, "web_note": web_note, "private": private, "system": system,
             "history": _history(conversation) + [user_msg], "files": files, "agent": persona,
-            "max_tokens": 350 if voice else 1200, "background_extract": background_extract, "voice": voice,
-            "tool_ctx": tool_ctx, "btw": btw}
+            "max_tokens": refine.max_tokens(found, voice), "background_extract": background_extract, "voice": voice,
+            "tool_ctx": tool_ctx, "btw": btw, "route": found}
 
 
 def _finish(ctx: dict, reply: str, model: str) -> dict:
@@ -764,9 +783,11 @@ def _apply_steering(ctx: dict, goals) -> bool:
 def think(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
           background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
           channel: str = "", agent_id: str = "", attachments: list | None = None,
-          tools_only: list | None = None, prefer: tuple | None = None, trusted: bool = True) -> dict:
+          tools_only: list | None = None, prefer: tuple | None = None, trusted: bool = True,
+          deep: bool | None = None) -> dict:
     """One full turn, returned when the whole reply is ready (tools included).
     prefer: a model to try first, e.g. llm.light() = FreeLLMAPI's fast free pool for spoken commands.
+    deep: ask several strong models and merge (None = Settings "deep_mode").
     trusted=False for prompts that carry outside text: owner commands in it are ignored (see _prepare)."""
     ctx = _prepare(message, mode, conversation, use_sealed, background_extract, web_override, voice, channel,
                    agent_id, attachments, tools_only, trusted)
@@ -777,9 +798,13 @@ def think(message: str, mode: str = "mirror", conversation: str = "main", use_se
     from . import goals
     goals.aborted(ctx["conversation"])            # forget a Stop pressed after the last answer had finished
     model = "none"
+    deep_first = refine.wants_deep(deep, ctx["private"]) and not voice and refine.for_person(conversation)
     for _ in range(tools.MAX_ROUNDS + 1):
-        reply, model = llm.chat(ctx["system"], ctx["history"], private=ctx["private"], max_tokens=ctx["max_tokens"],
-                                prefer=ctx["tool_ctx"].get("prefer"))
+        if deep_first:
+            reply, model = refine.deep(ctx)
+            deep_first = False
+        else:
+            reply, model = _ask(ctx)
         if not _tool_round(ctx, reply):
             break
         _apply_steering(ctx, goals)
@@ -788,7 +813,19 @@ def think(message: str, mode: str = "mirror", conversation: str = "main", use_se
             break
     else:
         reply = tools.TOOL_RE.sub("", reply).strip() or "I tried several steps but couldn't finish. Try asking differently."
-    return _finish(ctx, tools.TOOL_RE.sub("", reply).strip(), model)
+    checked = None
+    if refine.wants_check(ctx["route"], ctx["private"]) and not voice and refine.for_person(conversation):
+        reply, model, problems = refine.check_and_fix(ctx, reply, model)
+        checked = {"problems": len(problems)}
+    out = _finish(ctx, tools.TOOL_RE.sub("", reply).strip(), model)
+    return out | ({"checked": checked} if checked else {})
+
+
+def _ask(ctx: dict) -> tuple[str, str]:
+    """One model call for this turn, sorted for the message (fast for small talk, smart for hard questions)."""
+    route = ctx.get("route") or {}
+    return llm.chat(ctx["system"], ctx["history"], private=ctx["private"], max_tokens=ctx["max_tokens"],
+                    prefer=ctx["tool_ctx"].get("prefer"), task=route.get("task"), kind=route.get("kind", ""))
 
 
 TOOL_STATUS = {"web_search": "Searching the web…", "read_page": "Reading a page…", "search_memory": "Checking my memories…",
@@ -799,7 +836,8 @@ TOOL_STATUS = {"web_search": "Searching the web…", "read_page": "Reading a pag
 
 def think_stream(message: str, mode: str = "mirror", conversation: str = "main", use_sealed: bool = False,
                  background_extract: bool = True, web_override: bool | None = None, voice: bool = False,
-                 channel: str = "", agent_id: str = "", attachments: list | None = None):
+                 channel: str = "", agent_id: str = "", attachments: list | None = None,
+                 deep: bool | None = None):
     """One turn, streamed: yields ('text', piece) as the reply is written, ('status', note) while tools run,
     then ('final', result). If the page hangs up early (you talked over the voice), the reply is saved
     as far as you heard it, marked [interrupted]. The result says how long the first words and the
@@ -816,6 +854,9 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
     from . import goals
     import contextvars
     goals.aborted(ctx["conversation"])
+    ctx["deep"] = refine.wants_deep(deep, ctx["private"]) and not voice and refine.for_person(conversation)
+    if ctx["deep"]:
+        yield "status", "Deep mode: asking several models…"
     whose = contextvars.copy_context()            # the page may hang up while another thread holds us
     key = (config.user_key(), ctx["conversation"])
     _heard.pop(key, None)
@@ -831,18 +872,29 @@ def think_stream(message: str, mode: str = "mirror", conversation: str = "main",
         said = heard if heard is not None else "".join(shown).strip()
         whose.run(_finish, ctx, f"{said} {INTERRUPTED}".strip(), ctx.get("model", "none"))
         raise
-    result = _finish(ctx, "".join(shown).strip(), ctx.get("model", "none"))
-    yield "final", result | {"timing": {"ready_ms": ready_ms, "first_ms": first,
-                                        "total_ms": round((time.perf_counter() - started) * 1000)}}
+    reply, extra = "".join(shown).strip(), {}
+    if refine.wants_check(ctx["route"], ctx["private"]) and not voice and reply and refine.for_person(conversation):
+        yield "status", "Double-checking the answer…"
+        reply, ctx["model"], problems = refine.check_and_fix(ctx, reply, ctx.get("model", "none"))
+        extra["checked"] = {"problems": len(problems)}
+    result = _finish(ctx, reply, ctx.get("model", "none"))
+    yield "final", result | extra | {"timing": {"ready_ms": ready_ms, "first_ms": first,
+                                                "total_ms": round((time.perf_counter() - started) * 1000)}}
 
 
 def _stream_rounds(ctx: dict, goals, shown: list):
     """The model writes; tools run between rounds. Text pieces are yielded and collected in shown."""
+    route = ctx.get("route") or {}
     for _ in range(tools.MAX_ROUNDS + 1):
         filt = tools.ToolFilter()
-        for kind, value in llm.chat_stream(ctx["system"], ctx["history"], private=ctx["private"],
-                                           max_tokens=ctx["max_tokens"], prefer=ctx["tool_ctx"].get("prefer"),
-                                           voice=ctx.get("voice", False)):
+        if ctx.pop("deep", False):
+            text, model = refine.deep(ctx)
+            source = iter([("text", text), ("done", model)])
+        else:
+            source = llm.chat_stream(ctx["system"], ctx["history"], private=ctx["private"],
+                                     max_tokens=ctx["max_tokens"], prefer=ctx["tool_ctx"].get("prefer"),
+                                     voice=ctx.get("voice", False), task=route.get("task"), kind=route.get("kind", ""))
+        for kind, value in source:
             if kind == "text":
                 safe = filt.feed(value)
                 if safe:

@@ -44,7 +44,18 @@ def _default() -> dict:
         "tools_off": [],                # agent tools switched off by the owner
         "taint_guard": True,            # after reading outside content, block lasting actions and ask for device steps
         "sandbox_local": False,         # without Docker, run Python in a limited local process (no network isolation)
+        "speed_mode": "balanced",       # balanced | fastest (small talk always goes to the fastest model)
+        "self_check": True,             # a second model checks hard code/maths/reasoning answers
+        "deep_mode": False,             # ask several strong models and merge, for every message
+        "hedge_ms": 1500,               # start a second model if the first says nothing for this long (0 = never)
     }
+
+
+def _hedge(value) -> int:
+    try:
+        return max(0, min(10000, int(value)))
+    except (TypeError, ValueError):
+        return 1500
 
 
 def path():
@@ -80,6 +91,10 @@ def save(data: dict) -> dict:
         "tools_off": [str(t) for t in (data.get("tools_off") or []) if isinstance(t, str)][:20],
         "taint_guard": bool(data.get("taint_guard", True)),
         "sandbox_local": bool(data.get("sandbox_local", False)),
+        "speed_mode": data.get("speed_mode") if data.get("speed_mode") in ("balanced", "fastest") else "balanced",
+        "self_check": bool(data.get("self_check", True)),
+        "deep_mode": bool(data.get("deep_mode", False)),
+        "hedge_ms": _hedge(data.get("hedge_ms", 1500)),
     }
     from .voice import DEFAULTS as VOICE_DEFAULTS
     for k, v in (data.get("voice") or {}).items():
@@ -136,7 +151,8 @@ def merge_page_save(current: dict, incoming: dict) -> dict:
         out[group] = merged
     out["voice"] = (current.get("voice") or {}) | {k: v for k, v in (incoming.get("voice") or {}).items()
                                                    if v is not None}
-    for k in ("thinking", "tools_off", "taint_guard", "sandbox_local"):
+    for k in ("thinking", "tools_off", "taint_guard", "sandbox_local", "speed_mode", "self_check", "deep_mode",
+              "hedge_ms"):
         if out.get(k) is None:
             out[k] = current.get(k)
     return out

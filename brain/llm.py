@@ -14,7 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, netpool as httpx, settings, usage    # one kept-open connection pool, used like httpx
+from . import config, netpool as httpx, routing, settings, usage    # one kept-open connection pool, used like httpx
 from .providers import PRESETS
 
 log = logging.getLogger("brain.llm")
@@ -331,47 +331,118 @@ def models_for(p: dict) -> list[str]:
     return list(dict.fromkeys([m for m in [p["model"], *p.get("fallbacks", [])] if m]))
 
 
+def _candidates(chain: list[dict], task: str | None, kind: str = "",
+                prefer: tuple[str, str] | None = None) -> list[tuple[dict, str]]:
+    """(provider, model) pairs to try, best first. task None keeps your order exactly (main model, then backups)."""
+    if not task:
+        out = []
+        for p in chain:
+            models = models_for(p)
+            fresh = [m for m in models if not cooling(p["id"], m)]
+            out += [(p, m) for m in (fresh or models[:1])]   # if every model is resting, still try the main one
+        return out
+    head = []
+    if prefer and chain and chain[0]["id"] == prefer[0]:
+        head, chain = [(chain[0], m) for m in models_for(chain[0])], chain[1:]   # an agent's own model stays first
+    flat = [(p, m) for p in chain for m in models_for(p)]
+    if task == "smart":
+        flat += [(p, "auto:smart") for p in chain if p["id"] == "freellmapi" and "auto:smart" not in models_for(p)]
+    return head + routing.order(flat, task, cooling, kind)
+
+
+def _hedge_seconds(voice: bool = False) -> float | None:
+    """How long the first choice may stay silent before the next model is started too (Settings "hedge_ms")."""
+    try:
+        ms = float(settings.load().get("hedge_ms", 1500))
+    except (TypeError, ValueError):
+        ms = 1500.0
+    return None if ms <= 0 else (ms * 0.7 if voice else ms) / 1000
+
+
+class _Attempt:
+    """Book-keeping for one answer: which models failed and why, and when each one started."""
+
+    def __init__(self):
+        self.errors: list[str] = []
+        self.bad: set[str] = set()                    # providers whose key is bad (or that broke unexpectedly)
+        self.starts: dict[int, float] = {}
+
+    def skip(self, cand) -> bool:
+        return cand[0]["id"] in self.bad
+
+    def started(self, cand) -> None:
+        self.starts[id(cand)] = time.time()
+
+    def since(self, cand) -> float:
+        return time.time() - self.starts.get(id(cand), time.time())
+
+    def failed(self, cand, exc) -> None:
+        p, model = cand
+        usage.record(p["id"], model, False)
+        routing.observe(p["id"], model, False)
+        if isinstance(exc, routing.EmptyReply):
+            exc = ProviderError(p["id"], "empty reply")
+        if isinstance(exc, ProviderError):
+            self.errors.append(f"{exc} [{model}]" if len(models_for(p)) > 1 else str(exc))
+            if exc.key_problem:
+                self.bad.add(p["id"])
+            else:
+                cool_down(p["id"], model, exc.status)
+        else:
+            log.error("Provider %s failed: %s: %s", p["id"], exc.__class__.__name__, exc)
+            self.errors.append(f"{p['id']}: unexpected error {exc.__class__.__name__}: {exc}")
+            self.bad.add(p["id"])
+
+    def give_up(self, private: bool):
+        if private:
+            raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. "
+                                   + "; ".join(self.errors))
+        if not self.errors and not online():
+            raise ModelUnavailable("You're offline, and there's no AI model on this computer. "
+                                   "Settings → Offline AI sets one up (free).")
+        if not self.errors:
+            raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
+        raise ModelUnavailable(friendly_failure(self.errors))
+
+
 def chat(system: str, messages: list[dict], private: bool = False, json_mode: bool = False,
-         max_tokens: int = 1200, prefer: tuple[str, str] | None = None) -> tuple[str, str]:
+         max_tokens: int = 1200, prefer: tuple[str, str] | None = None, task: str | None = None,
+         kind: str = "", avoid: str = "") -> tuple[str, str]:
     """Answer with the first provider and model that works. Returns (reply, 'provider:model').
 
-    Within each provider it tries the main model, then its backup models. A model that is busy (503)
-    or out of quota (429) is skipped for a few minutes so later messages don't wait on it.
+    task: None keeps your own order; "fast", "balanced" or "smart" sort the models for the job (routing.py).
+    avoid: a 'provider:model' to skip if anything else can answer.
+    A model that is busy (503) or out of quota (429) is skipped for a few minutes so later messages don't
+    wait on it. If the first choice is very slow, the next one is started too and the first answer wins.
     """
     try:
         usage.check_limits()
     except usage.OverBudget as exc:
         raise ModelUnavailable(str(exc))
     chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
-    errors = []
-    for p in chain:
-        models = models_for(p)
-        fresh = [m for m in models if not cooling(p["id"], m)]
-        for model in fresh or models[:1]:  # if every model is cooling down, still try the main one
-            t0 = time.time()
-            try:
-                reply = call(p | {"model": model}, system, messages, json_mode=json_mode, max_tokens=max_tokens)
-                if errors:
-                    log.info("Answered by %s:%s after: %s", p["id"], model, "; ".join(errors))
-                usage.record(p["id"], model, True, time.time() - t0, usage.estimate(system, messages, reply))
-                return reply, f"{p['id']}:{model}"
-            except ProviderError as exc:
-                usage.record(p["id"], model, False)
-                errors.append(f"{exc} [{model}]" if len(models) > 1 else str(exc))
-                if exc.key_problem:
-                    break
-                cool_down(p["id"], model, exc.status)
-            except Exception as exc:
-                log.exception("Provider %s failed", p["id"])
-                errors.append(f"{p['id']}: unexpected error {exc.__class__.__name__}: {exc}")
-                break
-    if private:
-        raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
-    if not errors and not online():
-        raise ModelUnavailable("You're offline, and there's no AI model on this computer. Settings → Offline AI sets one up (free).")
-    if not errors:
-        raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
-    raise ModelUnavailable(friendly_failure(errors))
+    cands = _candidates(chain, None if private else task, kind, prefer)
+    if avoid:                                     # e.g. a self-check wants a second opinion, not the same model
+        cands = [c for c in cands if f"{c[0]['id']}:{c[1]}" != avoid] or cands
+    att = _Attempt()
+    hedge = _hedge_seconds()
+
+    def run(cand):
+        att.started(cand)
+        return [call(cand[0] | {"model": cand[1]}, system, messages, json_mode=json_mode, max_tokens=max_tokens)]
+
+    cand = None
+    for what, val in routing.race(cands, run, max(6.0, hedge * 4) if hedge else None, att.failed, att.skip):
+        if what == "win":
+            cand = val
+        elif what == "text":
+            p, model = cand
+            took = att.since(cand)
+            if att.errors:
+                log.info("Answered by %s:%s after: %s", p["id"], model, "; ".join(att.errors))
+            usage.record(p["id"], model, True, took, usage.estimate(system, messages, val))
+            routing.observe(p["id"], model, True, took)
+            return val, f"{p['id']}:{model}"
+    att.give_up(private)
 
 
 # ---------- Streaming (words appear and are spoken as they are written) ----------
@@ -533,64 +604,55 @@ def _stream_one(p: dict, system: str, messages: list[dict], max_tokens: int, voi
     return _stream_ollama(p, system, messages, timeout)
 
 
+def _clean_pieces(p: dict, system: str, messages: list[dict], max_tokens: int, voice: bool):
+    filt = ThoughtFilter()
+    for piece in _stream_one(p, system, messages, max_tokens, voice):
+        clean = filt.feed(piece)
+        if clean:
+            yield clean
+    tail = filt.flush()
+    if tail:
+        yield tail
+
+
 def chat_stream(system: str, messages: list[dict], private: bool = False, max_tokens: int = 1200,
-                prefer: tuple[str, str] | None = None, voice: bool = False):
+                prefer: tuple[str, str] | None = None, voice: bool = False, task: str | None = None, kind: str = ""):
     """Like chat(), but yields ('text', piece) as the reply is written, then ('done', 'provider:model').
 
-    Failover to the next model/provider happens only before the first words arrive."""
+    If the first choice says nothing for a moment (Settings key "hedge_ms", 1.5 s), the next model is started
+    too; the first to write wins. Failover happens only before the first words, so answers are never mixed."""
     try:
         usage.check_limits()
     except usage.OverBudget as exc:
         raise ModelUnavailable(str(exc))
     chain = _chain(["ollama"]) if private else _chain(prefer=prefer)
-    errors = []
-    for p in chain:
-        models = models_for(p)
-        fresh = [m for m in models if not cooling(p["id"], m)]
-        for model in fresh or models[:1]:
-            q = p | {"model": model}
-            sent = False
-            streamed_chars = 0
-            filt = ThoughtFilter()
-            try:
-                for piece in _stream_one(q, system, messages, max_tokens, voice):
-                    clean = filt.feed(piece)
-                    streamed_chars += len(piece)
-                    if clean:
-                        sent = True
-                        yield "text", clean
-                tail = filt.flush()
-                if tail:
-                    sent = True
-                    yield "text", tail
-                if not sent:
-                    raise ProviderError(p["id"], "empty reply")
-                usage.record(p["id"], model, True, 0.0, usage.estimate(system, messages) + streamed_chars // 4)
-                yield "done", f"{p['id']}:{model}"
-                return
-            except ProviderError as exc:
-                usage.record(p["id"], model, False)
-                if sent:   # words already shown: stop here rather than mixing two answers
-                    yield "done", f"{p['id']}:{model}"
-                    return
-                errors.append(f"{exc} [{model}]" if len(models) > 1 else str(exc))
-                if exc.key_problem:
-                    break
-                cool_down(p["id"], model, exc.status)
-            except Exception as exc:
-                if sent:
-                    yield "done", f"{p['id']}:{model}"
-                    return
-                log.exception("Provider %s failed", p["id"])
-                errors.append(f"{p['id']}: unexpected error {exc.__class__.__name__}: {exc}")
-                break
-    if private:
-        raise ModelUnavailable("Sealed memories only go to the local model, and Ollama is not running. " + "; ".join(errors))
-    if not errors and not online():
-        raise ModelUnavailable("You're offline, and there's no AI model on this computer. Settings → Offline AI sets one up (free).")
-    if not errors:
-        raise ModelUnavailable("No AI model is set up. Open Settings → AI models and add a free key (Gemini or Groq).")
-    raise ModelUnavailable(friendly_failure(errors))
+    cands = _candidates(chain, None if private else task, kind, prefer)
+    att = _Attempt()
+
+    def run(cand):
+        att.started(cand)
+        return _clean_pieces(cand[0] | {"model": cand[1]}, system, messages, max_tokens, voice)
+
+    cand, chars, first = None, 0, 0.0
+    for what, val in routing.race(cands, run, _hedge_seconds(voice), att.failed, att.skip):
+        if what == "win":
+            cand, first = val, att.since(val)
+            continue
+        p, model = cand
+        if what == "text":
+            chars += len(val)
+            yield "text", val
+            continue
+        if what == "end":
+            usage.record(p["id"], model, True, att.since(cand), usage.estimate(system, messages) + chars // 4)
+            routing.observe(p["id"], model, True, first)
+        else:                     # broke off mid-answer: stop here rather than mixing two answers
+            usage.record(p["id"], model, False)
+            if not isinstance(val, ProviderError):
+                log.error("Provider %s failed mid-answer: %s", p["id"], val)
+        yield "done", f"{p['id']}:{model}"
+        return
+    att.give_up(private)
 
 
 def test_provider(pid: str) -> dict:
@@ -797,7 +859,12 @@ def _is_free(pid: str, model: str) -> bool:
 
 
 def _rank(model: str) -> float:
-    """Rough quality-and-reliability score so stronger, steadier models are tried first."""
+    """Quality score used to sort models: model_quality.json first, then a guess from the name."""
+    return routing.quality(model)
+
+
+def _name_rank(model: str) -> float:
+    """Rough quality-and-reliability guess from the model name, for models the table does not know."""
     m = model.lower()
     score = 0.0
     if m in ("auto", "openrouter/free"):
