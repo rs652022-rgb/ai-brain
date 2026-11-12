@@ -16,7 +16,7 @@ pyperclip>=1.8
 pillow>=10.0
 pygetwindow>=0.0.9; sys_platform == "win32"
 # Push notifications
-pywebpush>=2.0
+pywebpush>=2.5.0
 # Secrets vault, WeCom/Feishu/Nostr encryption
 cryptography>=42
 coincurve>=20
