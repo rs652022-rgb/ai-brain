@@ -28,6 +28,8 @@ def b(tmp_path, monkeypatch):
               importer, tools, skills, automations, channels, channels_more, dreaming, freellm, agents, attachments, mcp,
               browser, sandbox, workflows, accounts, push, usage, plugins, server):
         importlib.reload(m)
+    from brain import channels_work
+    importlib.reload(channels_work)  # re-adds Teams and Google Chat to the freshly reloaded channels module
     db.init(); knowledge.init()
     monkeypatch.setattr(llm, "embed", lambda t: None)
     monkeypatch.setattr(llm, "private_json", lambda s, p: None)

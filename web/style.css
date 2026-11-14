@@ -458,3 +458,15 @@ table.usage th { color: var(--muted); font-weight: 500; text-transform: uppercas
 .meter > span { display: block; height: 100%; background: var(--signal, #3d5afe); }
 a.button { display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line, #ccc);
   text-decoration: none; color: inherit; font: inherit; }
+
+/* Agent kit: question cards, plan checklist, board */
+.kit-question { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.kit-question .row { flex-wrap: wrap; }
+.kit-todos { margin-top: 10px; font-size: 14px; }
+.kit-todo { padding: 2px 0; }
+.kit-todo.done { opacity: 0.6; text-decoration: line-through; }
+.kit-todo.in_progress { font-weight: 600; }
+.kit-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 14px; }
+.kit-col h3 { margin: 0 0 8px; }
+.kit-card select { max-width: 120px; }
+.kit-hit { background: rgba(255, 214, 0, 0.18); }

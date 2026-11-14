@@ -119,6 +119,9 @@ def t_use_skill(args: dict, ctx: dict) -> str:
     if not s:
         raise ToolError("No skill with that name. Use one of the listed skills.")
     db.audit("brain", "tool.use_skill", skill=s["name"])
+    from . import skillforge
+    skillforge.record_use(s["name"])
+    ctx.setdefault("skills_used", []).append(s["name"])
     return s["body"]
 
 
@@ -268,29 +271,68 @@ def _honcho_ready() -> bool:
         return False
 
 
+def _code_notes(name: str, ctx: dict) -> str:
+    """The workspace's AGENTS.md (or similar) the first time this turn touches it."""
+    seen = ctx.setdefault("code_notes_seen", [])
+    if not name or name in seen:
+        return ""
+    seen.append(name)
+    from . import kit_tools
+    return kit_tools.workspace_notes(name)
+
+
+def _code_change(op: str, name: str, args: dict, ctx: dict) -> str:
+    from . import checkpoints
+    from . import workspaces as w
+    if op == "write":
+        path = str(args.get("path", ""))
+        cid = checkpoints.save(name, [path], f"write {path}")
+        out = w.write(name, path, str(args.get("content", "")))
+    else:
+        patch = str(args.get("patch", ""))
+        cid = checkpoints.save(name, checkpoints.patch_paths(patch), "patch")
+        out = w.apply_patch(name, patch)
+    if cid:
+        ctx.setdefault("checkpoints", []).append(cid)
+        out += f"\n(Saved undo point {cid}.)"
+    return out
+
+
 def t_code(args: dict, ctx: dict) -> str:
     from . import workspaces as w
     op, name = str(args.get("op", "")), str(args.get("workspace", ""))
     try:
         if op == "list":
             return "\n".join(f"{x['name']} (branch {x['branch']}, {x['changed']} changed)" for x in w.list_all()) or "No workspaces."
+        notes = _code_notes(name, ctx)
         if op == "files":
-            return w.tree(name)
+            return w.tree(name) + notes
         if op == "read":
-            return w.read(name, str(args.get("path", "")))
+            return w.read(name, str(args.get("path", ""))) + notes
         if op == "search":
-            return w.search(name, str(args.get("pattern", "")))
-        if op == "write":
-            return w.write(name, str(args.get("path", "")), str(args.get("content", "")))
-        if op == "patch":
-            return w.apply_patch(name, str(args.get("patch", "")))
+            return w.search(name, str(args.get("pattern", ""))) + notes
+        if op in ("write", "patch"):
+            return _code_change(op, name, args, ctx) + notes
         if op == "branch":
             return w.branch(name, str(args.get("branch", "task")))
         if op == "diff":
             return w.diff(name)[:8000] or "No changes."
+        if op == "undo":
+            return _code_undo(ctx)
     except w.WorkspaceError as exc:
         raise ToolError(str(exc))
-    raise ToolError("op must be list, files, read, search, write, patch, branch or diff")
+    raise ToolError("op must be list, files, read, search, write, patch, branch, diff or undo")
+
+
+def _code_undo(ctx: dict) -> str:
+    """Undo the Brain's own last edit in this turn (older ones are the owner's call, in the Code page)."""
+    from . import checkpoints
+    mine = ctx.get("checkpoints") or []
+    if not mine:
+        raise ToolError("Nothing to undo in this turn. The owner can restore older undo points in the Code page.")
+    cid = mine.pop()
+    files = checkpoints.restore(cid, actor="brain")
+    return f"Undid {cid}: restored {', '.join(files) or 'nothing'}."
 
 
 def _code_ready() -> bool:
@@ -348,7 +390,7 @@ TOOLS = {
                    t_my_browser, lambda c: _ext_ready()),
     "deep_memory": ('{"question": "..."}', "Ask Honcho, the owner's long-term understanding engine, about the owner.",
                     t_deep_memory, lambda c: _honcho_ready()),
-    "code": ('{"op": "list|files|read|search|write|patch|branch|diff", "workspace": "...", "path": "...", '
+    "code": ('{"op": "list|files|read|search|write|patch|branch|diff|undo","workspace": "...", "path": "...", '
              '"pattern": "...", "content": "...", "patch": "unified diff", "branch": "..."}',
              "Work on code in the owner's git workspaces. Prefer small patches; the owner reviews and keeps or discards them.",
              t_code, lambda c: _code_ready()),
@@ -448,7 +490,7 @@ def parse(text: str) -> tuple[str, dict, str] | None:
 UNTRUSTED_TOOLS = frozenset({"web_search", "read_page", "browse", "my_browser", "mcp", "delegate"})
 # Tools (or ops) with lasting side effects that a tainted turn may not use on its own.
 # None = every op of the tool.
-GUARDED = {"schedule": None, "mcp": None, "code": frozenset({"write", "patch", "branch"})}
+GUARDED = {"schedule": None, "mcp": None, "code": frozenset({"write", "patch", "branch", "undo"})}
 
 
 def taint_guard_on() -> bool:
@@ -513,3 +555,6 @@ class ToolFilter:
 
 from . import tracing as _tracing  # noqa: E402
 run = _tracing.wrap("tool.run", run, lambda a, kw: {"tool": str(a[0]) if a else ""})
+
+from . import kit_tools as _kit  # noqa: E402  (search_chats, todo, board, ask_owner, skill_manage)
+_kit.register(TOOLS, GUARDED)

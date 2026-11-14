@@ -215,6 +215,24 @@ WhatsApp, SMS and LINE send messages to your Brain's web address, so it must be 
 
 **Gmail push alerts.** Gmail tells the Brain the moment mail arrives (Google's free Gmail API + Pub/Sub, your own Cloud project, read-only access). Needs the Brain online over HTTPS; on a laptop the 2-minute email watcher still works.
 
+## Agent kit (ideas from Hermes Agent and OpenMausBot, with you in charge)
+
+**It writes its own skills, safely.** After a hard task the Brain can save how it did it as a skill, or improve one that worked badly. Every skill, whether the Brain wrote it, it came from the marketplace or you imported it, gets a safety check. The check looks for hidden instructions, attempts to read or send secrets, destructive commands, disguised code and invisible characters. New skills wait as "suggested" unless Skills → "Switch on its new skills by itself" is on and the check is clean. Your own skills are never changed: it suggests a `-v2` instead.
+
+**Skill ratings.** Each skill shows how often it was used, with 👍 / 👎 buttons. Skills rated badly are marked "Needs work" so the Brain can improve them.
+
+**Search past chats.** Board tab → Search past chats, or ask "what did I say about the invoice last month?". It searches every conversation, not only the current one.
+
+**A visible plan.** For multi-step tasks the Brain shows a checklist under its reply and ticks off steps as it goes.
+
+**Task board.** A Board tab with To do, Doing, Done and Blocked columns for work that lasts longer than one chat. You and the Brain both add and move cards, but only you can delete them.
+
+**Question cards.** When it really needs your choice, it asks with clickable answers instead of guessing.
+
+**Undo points for code.** Before changing a file in a code workspace it saves a copy. You can undo from the reply, or later from Skills → Undo points. It follows the workspace's own `AGENTS.md`, `CLAUDE.md`, `SOUL.md` or `.cursorrules` for code style.
+
+**Safety.** Content from the web or email can't make it change the board or write skills. These changes are recorded in the Activity log.
+
 ## Device control (your computer and phone)
 
 Open the **Control** tab. Nothing happens until you **turn it on** and **allow a device**. You allow it once, and it stays allowed until you switch it off.
