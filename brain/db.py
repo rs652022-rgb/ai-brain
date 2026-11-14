@@ -1,6 +1,7 @@
 """SQLite storage: memories, pending memories, chat history and an append-only audit log."""
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -147,8 +148,29 @@ def connect() -> sqlite3.Connection:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        _use_wal(conn)
+    except sqlite3.OperationalError:
+        conn.close()
+        raise
     return conn
+
+
+WAL_TRIES = 40          # x 0.25 s: about the same 10 s or so a normal query waits on a busy database
+
+
+def _use_wal(conn: sqlite3.Connection) -> None:
+    """Switch to WAL once (it is saved in the file). SQLite doesn't wait for this switch when another
+    connection is writing, so retry briefly instead of failing with 'database is locked'."""
+    for attempt in range(WAL_TRIES):
+        try:
+            if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or attempt == WAL_TRIES - 1:
+                raise
+            time.sleep(0.25)
 
 
 @contextmanager
