@@ -706,7 +706,7 @@ def _answer_context(message, mode, conversation, use_sealed, background_extract,
     summ = _summary(conversation)
     if summ:
         system += f"\n\n<earlier_in_this_conversation>\n{summ['text']}\n</earlier_in_this_conversation>"
-    tool_ctx = {"web_asked": bool(want), "channel": channel, "tools_off": (persona or {}).get("tools_off", []),
+    tool_ctx = {"web_asked": bool(want), "channel": channel, "conversation": conversation, "tools_off": (persona or {}).get("tools_off", []),
                 "prefer": agents.prefer(persona) or (llm.voice_model() if voice else None),
                 "tainted": bool(web_docs) or not trusted}   # outside text already in the prompt
     if tools_only is not None:                    # restricted runs (e.g. reading untrusted email)
@@ -751,6 +751,7 @@ def _finish(ctx: dict, reply: str, model: str) -> dict:
            "conversation": ctx["conversation"]}
     if tc.get("task"):
         out["task"] = tc["task"]
+    out.update({k: tc[k] for k in ("question", "todos", "checkpoints", "skills_forged", "skills_used") if tc.get(k)})
     if len(tc.get("tools_used", [])) >= 2 and ctx["background_extract"]:
         from . import skills
         config.spawn(skills.reflect, message, tc.get("tools_used", []), reply)   # self-learning (proposals only)

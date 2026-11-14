@@ -47,6 +47,7 @@ def _default() -> dict:
         "speed_mode": "balanced",       # balanced | fastest (small talk always goes to the fastest model)
         "self_check": True,             # a second model checks hard code/maths/reasoning answers
         "deep_mode": False,             # ask several strong models and merge, for every message
+        "auto_skills": False,           # skills the Brain writes switch on by themselves when the safety check is clean
         "hedge_ms": 1500,               # start a second model if the first says nothing for this long (0 = never)
     }
 
@@ -95,6 +96,7 @@ def save(data: dict) -> dict:
         "self_check": bool(data.get("self_check", True)),
         "deep_mode": bool(data.get("deep_mode", False)),
         "hedge_ms": _hedge(data.get("hedge_ms", 1500)),
+        "auto_skills": bool(data.get("auto_skills", False)),
     }
     from .voice import DEFAULTS as VOICE_DEFAULTS
     for k, v in (data.get("voice") or {}).items():
@@ -152,7 +154,7 @@ def merge_page_save(current: dict, incoming: dict) -> dict:
     out["voice"] = (current.get("voice") or {}) | {k: v for k, v in (incoming.get("voice") or {}).items()
                                                    if v is not None}
     for k in ("thinking", "tools_off", "taint_guard", "sandbox_local", "speed_mode", "self_check", "deep_mode",
-              "hedge_ms"):
+              "hedge_ms", "auto_skills"):
         if out.get(k) is None:
             out[k] = current.get(k)
     return out

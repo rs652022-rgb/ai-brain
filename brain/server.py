@@ -253,6 +253,7 @@ class SettingsIn(BaseModel):
     self_check: bool | None = None
     deep_mode: bool | None = None
     hedge_ms: int | None = Field(default=None, ge=0, le=10000)
+    auto_skills: bool | None = None
 
 
 @app.put("/api/settings")
@@ -2286,6 +2287,8 @@ def audit():
 
 # ---------- Web app ----------
 
+from . import kit_api as _kit_api  # noqa: E402
+app.include_router(_kit_api.router)
 app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 

@@ -129,11 +129,22 @@ def export_skills() -> bytes:
 
 
 def import_skills(name: str, data: bytes) -> list[str]:
+    """Add skills from a SKILL.md or a zip. They wait as "suggested"; the audit notes any the safety check flags."""
+    from . import skillforge
+    added = _import_md(name, data) if name.lower().endswith(".md") else _import_zip(data)
+    flagged = [n for n in added if skillforge.scan_skill(n)]
+    db.audit("owner", "skills.import", count=len(added), skills=added, flagged=flagged)
+    return added
+
+
+def _import_md(name: str, data: bytes) -> list[str]:
+    meta, body = skills._parse(data.decode("utf-8", "replace"))
+    s = skills.save(meta.get("name") or name.rsplit(".", 1)[0], str(meta.get("description", "")), body, "suggested", "import")
+    return [s["name"]]
+
+
+def _import_zip(data: bytes) -> list[str]:
     added = []
-    if name.lower().endswith(".md"):
-        meta, body = skills._parse(data.decode("utf-8", "replace"))
-        s = skills.save(meta.get("name") or name.rsplit(".", 1)[0], str(meta.get("description", "")), body, "suggested", "import")
-        return [s["name"]]
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for n in z.namelist()[:50]:
             if n.endswith("SKILL.md"):
@@ -145,5 +156,4 @@ def import_skills(name: str, data: bytes) -> list[str]:
                     added.append(s["name"])
                 except ValueError:
                     pass
-    db.audit("owner", "skills.import", count=len(added))
     return added
